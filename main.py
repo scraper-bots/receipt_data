@@ -13,7 +13,8 @@ FISCAL_IDS_FILE = "fiscal_ids.txt"
 OUTPUT_DIR = "receipts"
 
 # Delay in seconds between each request to avoid rate limiting
-REQUEST_DELAY_SECONDS = 0.1 # Adjust this value if you encounter issues (e.g., 0.5 or 1.0)
+# Increased this value significantly to reduce load on the server and prevent timeouts
+REQUEST_DELAY_SECONDS = 2.0 # Adjust this value if you encounter issues (e.g., 0.5 or 1.0)
 
 # Headers to mimic a browser request
 HEADERS = {
