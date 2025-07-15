@@ -26,7 +26,8 @@ COMMON_HEADERS = {
     "Accept-Language": "en-US,en;q=0.9",
     "Connection": "keep-alive",
     "Host": "monitoring.e-kassa.gov.az",
-    "Referer": "https://monitoring.e-kassa.gov.az/",
+    # Updated Referer to the new URL requested by the user
+    "Referer": "https://monitoring.e-kassa.gov.az/#/index",
     "Sec-Ch-Ua": '"Google Chrome";v="137", "Chromium";v="137", "Not/A)Brand";v="24"',
     "Sec-Ch-Ua-Mobile": "?0",
     "Sec-Ch-Ua-Platform": '"Windows"',
@@ -51,25 +52,20 @@ def setup_session():
     session = requests.Session()
 
     # Define retry strategy
-    # Status for which to retry: 5xx errors (server errors), and 429 (Too Many Requests)
-    # Backoff factor: delay = factor * (2 ** (retry - 1))
-    # Total retries: 5 attempts
+    # Increased total retries to 10
     retries = Retry(
-        total=5,
-        backoff_factor=1, # 1 second initial delay, then 2, 4, 8, 16 seconds
+        total=10, # Increased total retries
+        backoff_factor=1, # 1 second initial delay, then 2, 4, 8, 16 seconds etc.
         status_forcelist=[500, 502, 503, 504, 429],
         allowed_methods=frozenset(['GET']), # Only retry GET requests
         raise_on_status=False # Do not raise exception for status codes in status_forcelist
     )
 
     # Mount the retry strategy to the session
-    # This applies retries to all HTTP and HTTPS requests made through this session
     session.mount('http://', HTTPAdapter(max_retries=retries))
     session.mount('https://', HTTPAdapter(max_retries=retries))
 
     # Set default timeout for all requests in this session (connect, read)
-    # Connect timeout: 30 seconds for establishing connection
-    # Read timeout: 90 seconds for waiting for data after connection is established
     session.timeout = (30, 90)
 
     # Update session headers
@@ -82,9 +78,14 @@ def get_csrf_token(session, main_url):
     Attempts to fetch the CSRF token from the main website using the session.
     This simulates visiting the page to get a valid token.
     """
+    # Add a small initial delay before attempting to fetch the CSRF token
+    print(f"Waiting {REQUEST_DELAY_SECONDS} seconds before fetching CSRF token...")
+    time.sleep(REQUEST_DELAY_SECONDS)
+
     print(f"Attempting to fetch CSRF token from: {main_url}")
     try:
-        # Use the session for the GET request
+        # Use the session for the GET request. Session's timeout and retry apply.
+        # Use the updated main_url from COMMON_HEADERS["Referer"]
         response = session.get(main_url)
         response.raise_for_status() # Raise an exception for HTTP errors (4xx or 5xx)
 
@@ -107,13 +108,13 @@ def get_csrf_token(session, main_url):
         print("CSRF token not found on the main page. Proceeding without it.")
         return "" # Return empty if not found
     except requests.exceptions.Timeout:
-        print(f"Timeout occurred while fetching CSRF token from {main_url}.")
+        print(f"Timeout occurred while fetching CSRF token from {main_url}. (Session retries exhausted)")
         return ""
     except requests.exceptions.ConnectionError as e:
-        print(f"Connection error while fetching CSRF token from {main_url}: {e}")
+        print(f"Connection error while fetching CSRF token from {main_url}: {e}. (Session retries exhausted)")
         return ""
     except requests.exceptions.RequestException as e:
-        print(f"An error occurred while fetching CSRF token from {main_url}: {e}")
+        print(f"An unhandled request error occurred while fetching CSRF token from {main_url}: {e}")
         return ""
 
 def read_fiscal_ids(file_path):
@@ -140,8 +141,8 @@ def download_receipt(session, fiscal_id, output_dir, delay):
 
     try:
         print(f"Attempting to download: {url}")
-        # Use the session for the GET request
-        response = session.get(url, stream=True) # Timeout is set on the session
+        # Use the session for the GET request. Session's timeout and retry apply.
+        response = session.get(url, stream=True)
 
         if response.status_code == 200:
             with open(file_path, 'wb') as f:
@@ -153,10 +154,10 @@ def download_receipt(session, fiscal_id, output_dir, delay):
             print(f"Failed to download {fiscal_id}: Status Code {response.status_code}, URL: {url}")
             return False
     except requests.exceptions.Timeout:
-        print(f"Timeout occurred while downloading {fiscal_id} from {url}. (Retries handled by session)")
+        print(f"Timeout occurred while downloading {fiscal_id} from {url}. (Session retries handled)")
         return False
     except requests.exceptions.ConnectionError as e:
-        print(f"Connection error while downloading {fiscal_id} from {url}: {e}. (Retries handled by session)")
+        print(f"Connection error while downloading {fiscal_id} from {url}: {e}. (Session retries handled)")
         return False
     except requests.exceptions.RequestException as e:
         print(f"An unhandled request error occurred while downloading {fiscal_id} from {url}: {e}")
@@ -171,6 +172,7 @@ def main():
     session = setup_session()
 
     # Get CSRF token before starting downloads
+    # Pass the updated Referer URL as the main_url for CSRF token fetch
     csrf_token = get_csrf_token(session, COMMON_HEADERS["Referer"])
     if csrf_token:
         session.headers["X-Csrf-Token"] = csrf_token
