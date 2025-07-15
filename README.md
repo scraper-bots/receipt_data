@@ -1,8 +1,3 @@
-Here is your complete and properly formatted `README.md` file tailored for your repository [https://github.com/Ismat-Samadov/receipt\_data](https://github.com/Ismat-Samadov/receipt_data):
-
----
-
-```markdown
 # Receipt Data Scraper
 
 This repository contains a Python script designed to automate the download of payment receipts from the [monitoring.e-kassa.gov.az](https://monitoring.e-kassa.gov.az) website, identified by unique fiscal IDs. The script is resilient against network issues and server-side rate limiting, incorporating retry mechanisms and handling CSRF tokens where possible.
@@ -223,7 +218,4 @@ requests
 beautifulsoup4
 urllib3
 
-```
-
-Let me know if you want badges (e.g., Python version, license, etc.) or GitHub Actions for auto-validation.
 ```
