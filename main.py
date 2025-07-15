@@ -1,6 +1,7 @@
 import requests
 import os
 import time
+from bs4 import BeautifulSoup # Import BeautifulSoup for HTML parsing
 
 # --- Configuration ---
 # Base URL for the receipts
@@ -33,7 +34,7 @@ HEADERS = {
     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/137.0.0.0 Safari/537.36",
     "User-Lang": "az",
     "User-Time-Zone": "Asia/Baku",
-    "X-Csrf-Token": "", # This might need to be dynamic if the server expects a real CSRF token
+    "X-Csrf-Token": "", # This will be dynamically updated
 }
 
 # --- Script Logic ---
@@ -42,6 +43,40 @@ def create_output_directory(directory):
     """Creates the output directory if it doesn't exist."""
     os.makedirs(directory, exist_ok=True)
     print(f"Ensured output directory '{directory}' exists.")
+
+def get_csrf_token(main_url, headers):
+    """
+    Attempts to fetch the CSRF token from the main website.
+    This simulates visiting the page to get a valid token.
+    """
+    print(f"Attempting to fetch CSRF token from: {main_url}")
+    try:
+        # Make a GET request to the main page to get the HTML content
+        response = requests.get(main_url, headers=headers, timeout=15)
+        response.raise_for_status() # Raise an exception for HTTP errors (4xx or 5xx)
+
+        # Parse the HTML content
+        soup = BeautifulSoup(response.text, 'html.parser')
+
+        # Look for a meta tag or input field that might contain the CSRF token
+        # Common patterns: <meta name="csrf-token" content="..."> or <input type="hidden" name="_csrf" value="...">
+        csrf_meta = soup.find('meta', attrs={'name': 'csrf-token'})
+        if csrf_meta and 'content' in csrf_meta.attrs:
+            token = csrf_meta['content']
+            print(f"Found CSRF token from meta tag: {token[:10]}...") # Print first 10 chars for brevity
+            return token
+
+        csrf_input = soup.find('input', attrs={'name': '_csrf'})
+        if csrf_input and 'value' in csrf_input.attrs:
+            token = csrf_input['value']
+            print(f"Found CSRF token from input field: {token[:10]}...")
+            return token
+
+        print("CSRF token not found on the main page. Proceeding without it.")
+        return "" # Return empty if not found
+    except requests.exceptions.RequestException as e:
+        print(f"Error fetching CSRF token from {main_url}: {e}")
+        return "" # Return empty on error
 
 def read_fiscal_ids(file_path):
     """Reads fiscal IDs from a text file, one per line."""
@@ -91,6 +126,14 @@ def download_receipt(fiscal_id, output_dir, headers, delay):
 
 def main():
     create_output_directory(OUTPUT_DIR)
+
+    # Get CSRF token before starting downloads
+    csrf_token = get_csrf_token(HEADERS["Referer"], HEADERS)
+    if csrf_token:
+        HEADERS["X-Csrf-Token"] = csrf_token
+    else:
+        print("Warning: Could not obtain CSRF token. Downloads might still fail.")
+
     fiscal_ids = read_fiscal_ids(FISCAL_IDS_FILE)
 
     if not fiscal_ids:
