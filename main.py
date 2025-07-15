@@ -1,121 +1,204 @@
-#!/usr/bin/env python3
+import requests
 import os
 import time
-import requests
+from bs4 import BeautifulSoup
 from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
 
 # --- Configuration ---
-BASE_URL             = "https://monitoring.e-kassa.gov.az/pks-monitoring/2.0.0/documents/"
-FISCAL_IDS_FILE      = "fiscal_ids.txt"
-OUTPUT_DIR           = "receipts"
-REQUEST_DELAY_SECONDS= 2.0     # pause between requests
-TIMEOUT              = (5, 30) # (connect timeout, read timeout)
-MAX_RETRIES          = 3       # total attempts (incl. first try + retries)
-BACKOFF_FACTOR       = 0.5     # exponential backoff factor for retries
+# Base URL for the receipts
+BASE_URL = "https://monitoring.e-kassa.gov.az/pks-monitoring/2.0.0/documents/"
 
-HEADERS = {
-    "Accept":             "image/jpeg,image/png,*/*",
-    "Accept-Encoding":    "gzip, deflate, br",
-    "Accept-Language":    "en-US,en;q=0.9",
-    "Connection":         "keep-alive",
-    "Host":               "monitoring.e-kassa.gov.az",
-    "Referer":            "https://monitoring.e-kassa.gov.az/",
-    "Sec-Fetch-Dest":     "image",
-    "Sec-Fetch-Mode":     "cors",
-    "Sec-Fetch-Site":     "same-origin",
-    "User-Agent":         "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"
-                          " AppleWebKit/537.36 (KHTML, like Gecko)"
-                          " Chrome/137.0.0.0 Safari/537.36",
-    "User-Lang":          "az",
-    "User-Time-Zone":     "Asia/Baku",
+# Input file containing fiscal IDs (one ID per line)
+FISCAL_IDS_FILE = "fiscal_ids.txt"
+
+# Output directory to save the downloaded receipts
+OUTPUT_DIR = "receipts"
+
+# Delay in seconds between each request (after successful download or max retries)
+# This is for politeness, the retry mechanism handles delays for failed attempts.
+REQUEST_DELAY_SECONDS = 2.0
+
+# --- Headers for mimicking a browser request ---
+COMMON_HEADERS = {
+    "Accept": "application/json, text/plain, */*",
+    "Accept-Encoding": "gzip, deflate, br, zstd",
+    "Accept-Language": "en-US,en;q=0.9",
+    "Connection": "keep-alive",
+    "Host": "monitoring.e-kassa.gov.az",
+    "Referer": "https://monitoring.e-kassa.gov.az/",
+    "Sec-Ch-Ua": '"Google Chrome";v="137", "Chromium";v="137", "Not/A)Brand";v="24"',
+    "Sec-Ch-Ua-Mobile": "?0",
+    "Sec-Ch-Ua-Platform": '"Windows"',
+    "Sec-Fetch-Dest": "empty",
+    "Sec-Fetch-Mode": "cors",
+    "Sec-Fetch-Site": "same-origin",
+    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/137.0.0.0 Safari/537.36",
+    "User-Lang": "az",
+    "User-Time-Zone": "Asia/Baku",
+    "X-Csrf-Token": "", # This will be dynamically updated
 }
 
-# --- Helpers ---
-def ensure_output_dir(path):
-    os.makedirs(path, exist_ok=True)
-    print(f"✔️  Ensured output directory: {path}")
+# --- Script Logic ---
 
-def load_fiscal_ids(path):
-    try:
-        with open(path, "r") as f:
-            ids = [line.strip() for line in f if line.strip()]
-        print(f"✔️  Loaded {len(ids)} fiscal IDs from `{path}`")
-        return ids
-    except FileNotFoundError:
-        print(f"❌  File not found: `{path}`")
-        exit(1)
+def create_output_directory(directory):
+    """Creates the output directory if it doesn't exist."""
+    os.makedirs(directory, exist_ok=True)
+    print(f"Ensured output directory '{directory}' exists.")
 
-def create_session():
-    """Return a `requests.Session` with retry/backoff configured."""
+def setup_session():
+    """Configures a requests Session with retries and common headers."""
     session = requests.Session()
+
+    # Define retry strategy
+    # Status for which to retry: 5xx errors (server errors), and 429 (Too Many Requests)
+    # Backoff factor: delay = factor * (2 ** (retry - 1))
+    # Total retries: 5 attempts
     retries = Retry(
-        total=MAX_RETRIES - 1,               # retries _after_ first attempt
-        backoff_factor=BACKOFF_FACTOR,
-        status_forcelist=[500, 502, 503, 504],
-        allowed_methods=["GET"],
-        raise_on_status=False
+        total=5,
+        backoff_factor=1, # 1 second initial delay, then 2, 4, 8, 16 seconds
+        status_forcelist=[500, 502, 503, 504, 429],
+        allowed_methods=frozenset(['GET']), # Only retry GET requests
+        raise_on_status=False # Do not raise exception for status codes in status_forcelist
     )
-    adapter = HTTPAdapter(max_retries=retries)
-    session.mount("https://", adapter)
-    session.mount("http://", adapter)
-    session.headers.update(HEADERS)
+
+    # Mount the retry strategy to the session
+    # This applies retries to all HTTP and HTTPS requests made through this session
+    session.mount('http://', HTTPAdapter(max_retries=retries))
+    session.mount('https://', HTTPAdapter(max_retries=retries))
+
+    # Set default timeout for all requests in this session (connect, read)
+    # Connect timeout: 30 seconds for establishing connection
+    # Read timeout: 90 seconds for waiting for data after connection is established
+    session.timeout = (30, 90)
+
+    # Update session headers
+    session.headers.update(COMMON_HEADERS)
+
     return session
 
-def download_receipt(session, fid):
-    url = f"{BASE_URL}{fid}"
-    out_path = os.path.join(OUTPUT_DIR, f"{fid}.jpeg")
+def get_csrf_token(session, main_url):
+    """
+    Attempts to fetch the CSRF token from the main website using the session.
+    This simulates visiting the page to get a valid token.
+    """
+    print(f"Attempting to fetch CSRF token from: {main_url}")
+    try:
+        # Use the session for the GET request
+        response = session.get(main_url)
+        response.raise_for_status() # Raise an exception for HTTP errors (4xx or 5xx)
 
-    if os.path.exists(out_path):
-        print(f"→ Skipping {fid}: already exists")
+        # Parse the HTML content
+        soup = BeautifulSoup(response.text, 'html.parser')
+
+        # Look for a meta tag or input field that might contain the CSRF token
+        csrf_meta = soup.find('meta', attrs={'name': 'csrf-token'})
+        if csrf_meta and 'content' in csrf_meta.attrs:
+            token = csrf_meta['content']
+            print(f"Found CSRF token from meta tag: {token[:10]}...")
+            return token
+
+        csrf_input = soup.find('input', attrs={'name': '_csrf'})
+        if csrf_input and 'value' in csrf_input.attrs:
+            token = csrf_input['value']
+            print(f"Found CSRF token from input field: {token[:10]}...")
+            return token
+
+        print("CSRF token not found on the main page. Proceeding without it.")
+        return "" # Return empty if not found
+    except requests.exceptions.Timeout:
+        print(f"Timeout occurred while fetching CSRF token from {main_url}.")
+        return ""
+    except requests.exceptions.ConnectionError as e:
+        print(f"Connection error while fetching CSRF token from {main_url}: {e}")
+        return ""
+    except requests.exceptions.RequestException as e:
+        print(f"An error occurred while fetching CSRF token from {main_url}: {e}")
+        return ""
+
+def read_fiscal_ids(file_path):
+    """Reads fiscal IDs from a text file, one per line."""
+    fiscal_ids = []
+    try:
+        with open(file_path, 'r') as f:
+            for line in f:
+                fiscal_ids.append(line.strip())
+        print(f"Successfully read {len(fiscal_ids)} fiscal IDs from '{file_path}'.")
+    except FileNotFoundError:
+        print(f"Error: Fiscal IDs file '{file_path}' not found. Please create it.")
+        exit()
+    return fiscal_ids
+
+def download_receipt(session, fiscal_id, output_dir, delay):
+    """Downloads a single receipt and saves it to the specified directory."""
+    url = f"{BASE_URL}{fiscal_id}"
+    file_path = os.path.join(output_dir, f"{fiscal_id}.jpeg")
+
+    if os.path.exists(file_path):
+        print(f"Skipping {fiscal_id}: File already exists at '{file_path}'.")
         return True
 
     try:
-        resp = session.get(url, timeout=TIMEOUT, stream=True)
-        status = resp.status_code
+        print(f"Attempting to download: {url}")
+        # Use the session for the GET request
+        response = session.get(url, stream=True) # Timeout is set on the session
 
-        if status == 200:
-            with open(out_path, "wb") as f:
-                for chunk in resp.iter_content(8192):
+        if response.status_code == 200:
+            with open(file_path, 'wb') as f:
+                for chunk in response.iter_content(chunk_size=8192):
                     f.write(chunk)
-            print(f"✅ [{status}] Downloaded `{fid}.jpeg`")
+            print(f"Successfully downloaded: {fiscal_id} to '{file_path}'")
             return True
-
-        # non-recoverable errors
-        print(f"❌ [{status}] Failed for {fid} (no retry)")
+        else:
+            print(f"Failed to download {fiscal_id}: Status Code {response.status_code}, URL: {url}")
+            return False
+    except requests.exceptions.Timeout:
+        print(f"Timeout occurred while downloading {fiscal_id} from {url}. (Retries handled by session)")
         return False
-
-    except requests.exceptions.ConnectTimeout:
-        print(f"⚠️  [ConnectTimeout] {fid}")
-    except requests.exceptions.ReadTimeout:
-        print(f"⚠️  [ReadTimeout] {fid}")
+    except requests.exceptions.ConnectionError as e:
+        print(f"Connection error while downloading {fiscal_id} from {url}: {e}. (Retries handled by session)")
+        return False
     except requests.exceptions.RequestException as e:
-        print(f"❌ [Error] {fid}: {e}")
-
-    return False
+        print(f"An unhandled request error occurred while downloading {fiscal_id} from {url}: {e}")
+        return False
+    finally:
+        # This delay is for politeness between different fiscal ID downloads,
+        # not for retries of the same fiscal ID.
+        time.sleep(delay)
 
 def main():
-    ensure_output_dir(OUTPUT_DIR)
-    fiscal_ids = load_fiscal_ids(FISCAL_IDS_FILE)
-    session = create_session()
+    create_output_directory(OUTPUT_DIR)
+    session = setup_session()
 
-    total = len(fiscal_ids)
-    succ = fail = 0
+    # Get CSRF token before starting downloads
+    csrf_token = get_csrf_token(session, COMMON_HEADERS["Referer"])
+    if csrf_token:
+        session.headers["X-Csrf-Token"] = csrf_token
+        print(f"Updated session with CSRF token: {csrf_token[:10]}...")
+    else:
+        print("Warning: Could not obtain CSRF token. Downloads might still fail if it's strictly required.")
 
-    for idx, fid in enumerate(fiscal_ids, start=1):
-        print(f"\n[{idx}/{total}] Processing: {fid}")
-        if download_receipt(session, fid):
-            succ += 1
+    fiscal_ids = read_fiscal_ids(FISCAL_IDS_FILE)
+
+    if not fiscal_ids:
+        print("No fiscal IDs found to process. Exiting.")
+        return
+
+    successful_downloads = 0
+    failed_downloads = 0
+
+    for i, fiscal_id in enumerate(fiscal_ids):
+        print(f"\nProcessing {i+1}/{len(fiscal_ids)}: {fiscal_id}")
+        if download_receipt(session, fiscal_id, OUTPUT_DIR, REQUEST_DELAY_SECONDS):
+            successful_downloads += 1
         else:
-            fail += 1
-        time.sleep(REQUEST_DELAY_SECONDS)
+            failed_downloads += 1
 
-    # Summary
     print("\n--- Download Summary ---")
-    print(f"Total IDs: {total}")
-    print(f"Successful: {succ}")
-    print(f"Failed: {fail}")
-    print(f"Receipts directory: {os.path.abspath(OUTPUT_DIR)}\n")
+    print(f"Total IDs processed: {len(fiscal_ids)}")
+    print(f"Successful downloads: {successful_downloads}")
+    print(f"Failed downloads: {failed_downloads}")
+    print(f"Receipts saved to: {os.path.abspath(OUTPUT_DIR)}")
 
 if __name__ == "__main__":
-    main(
+    main()
