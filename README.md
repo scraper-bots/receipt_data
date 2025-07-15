@@ -195,27 +195,3 @@ This project is distributed under the terms specified in the [LICENSE](./LICENSE
 ## 🤝 Contributions
 
 Contributions are welcome via pull requests or issue submissions. Please ensure changes are tested and follow Python best practices.
-
----
-
-## 📬 Contact
-
-Maintained by [Ismat Samadov](https://github.com/Ismat-Samadov)
-
-Feel free to open an issue if you encounter any bugs or have feature requests.
-
-```
-
----
-
-### ✅ Next Steps:
-
-- Save this as `README.md` in your repo root.
-- Ensure `requirements.txt` includes:
-```
-
-requests
-beautifulsoup4
-urllib3
-
-```
