@@ -16,6 +16,39 @@ logging.basicConfig(level=logging.ERROR)
 RECEIPTS_DIR = 'receipts'
 OUTPUT_CSV = 'receipts.csv'
 
+def clean_item_name(item_name):
+    """
+    Clean item name by removing VAT codes and other unwanted prefixes.
+    
+    Args:
+        item_name (str): Raw item name from OCR
+        
+    Returns:
+        str: Cleaned item name
+    """
+    if not item_name:
+        return ""
+    
+    # Remove VAT codes like "ƏDV: 189:", "ƏDV: 1894", "vƏDV: 189:", etc.
+    item_name = re.sub(r'^v?ƏDV[:\s]*\d+[:\s]*', '', item_name)
+    
+    # Handle cases where VAT codes are in the middle with quotes or spaces
+    item_name = re.sub(r'^"?ƏDV[:\s]*\d+[:\s]*', '', item_name)
+    
+    # Remove "ƏDV-dən azad" (VAT-free) prefix
+    item_name = re.sub(r'^ƏDV-dən\s+azad\s+', '', item_name)
+    
+    # Remove "Ticarət əlavəsi:" prefix
+    item_name = re.sub(r'^Ticarət\s+əlavəsi[:\s]*\d*\s*', '', item_name)
+    
+    # Remove quotes at the beginning and end
+    item_name = re.sub(r'^["\']|["\']$', '', item_name)
+    
+    # Clean up extra whitespace
+    item_name = re.sub(r'\s+', ' ', item_name).strip()
+    
+    return item_name
+
 def parse_receipt_text(text, filename):
     """
     Enhanced parsing function that extracts all 25 required columns from Azerbaijani receipts.
@@ -31,8 +64,8 @@ def parse_receipt_text(text, filename):
     
     # Enhanced regex patterns handling OCR variations and character encoding issues
     patterns = {
-        # Handle OCR variations for store name - multiple possible formats
-        'store_name': r'(?:Obyektin|əri)\s*(?:adı|ад)[:\s]*(.*?)(?:\n|$)',
+        # Store name should be extracted from taxpayer name (more reliable)
+        'store_name_temp': r'Vergi\s*ödəyicisinin\s*adı[:\s]*(.*?)(?:\n.*?)?(?:\nVÖEN|\nMƏHDUD|\nCƏMİYYƏTİ|\n|$)',
         
         # Store address with variations
         'store_address': r'(?:Obyektin\s*ünvanı|fani)[:\s]*(.*?)(?:\n|$)',
@@ -126,6 +159,13 @@ def parse_receipt_text(text, filename):
                 taxpayer_text = re.sub(r'["\']+', '', taxpayer_text)
                 taxpayer_text = re.sub(r'\s+', ' ', taxpayer_text)
                 data[key] = taxpayer_text
+            elif key == 'store_name_temp':
+                # Use taxpayer name as store name (more reliable)
+                store_text = match.group(1).strip()
+                # Remove quotes and extra formatting
+                store_text = re.sub(r'["\']+', '', store_text)
+                store_text = re.sub(r'\s+', ' ', store_text)
+                data['store_name'] = store_text
             elif key == 'cashier_name':
                 # Clean cashier name - remove common OCR artifacts
                 cashier_text = match.group(1).strip()
@@ -142,13 +182,9 @@ def parse_receipt_text(text, filename):
         if fiscal_alt:
             data['fiscal_id'] = fiscal_alt.group(1).strip()
     
-    if not data.get('store_name'):
-        # Try to extract from the first few lines
-        lines = text.split('\n')[:5]
-        for line in lines:
-            if 'YORKER' in line or 'MART' in line or 'ARAZ' in line:
-                data['store_name'] = line.strip()
-                break
+    # Ensure store_name is set from taxpayer_name if not already set
+    if not data.get('store_name') and data.get('taxpayer_name'):
+        data['store_name'] = data['taxpayer_name']
     
     # Process payment methods - combine all non-zero payment types
     payment_methods = []
@@ -203,12 +239,17 @@ def parse_receipt_text(text, filename):
                         unit_price = float(item_match.group(3))
                         line_total = float(item_match.group(4))
 
-                    items_data.append({
-                        'item_name': item_name,
-                        'quantity': quantity,
-                        'unit_price': unit_price,
-                        'line_total': line_total
-                    })
+                    # Clean item name by removing VAT codes
+                    item_name = clean_item_name(item_name)
+                    
+                    # Only add if item name is not empty after cleaning
+                    if item_name:
+                        items_data.append({
+                            'item_name': item_name,
+                            'quantity': quantity,
+                            'unit_price': unit_price,
+                            'line_total': line_total
+                        })
                 elif i + 1 < len(item_lines):
                     # Handle multi-line item names
                     combined_line = f"{line} {item_lines[i+1].strip()}"
@@ -219,12 +260,17 @@ def parse_receipt_text(text, filename):
                         unit_price = float(item_match.group(3))
                         line_total = float(item_match.group(4))
 
-                        items_data.append({
-                            'item_name': item_name,
-                            'quantity': quantity,
-                            'unit_price': unit_price,
-                            'line_total': line_total
-                        })
+                        # Clean item name by removing VAT codes
+                        item_name = clean_item_name(item_name)
+                        
+                        # Only add if item name is not empty after cleaning
+                        if item_name:
+                            items_data.append({
+                                'item_name': item_name,
+                                'quantity': quantity,
+                                'unit_price': unit_price,
+                                'line_total': line_total
+                            })
                         i += 1
                 i += 1
     except Exception as e:
