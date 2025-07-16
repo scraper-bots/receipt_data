@@ -189,20 +189,19 @@ def parse_receipt_text(text, filename):
     if not data.get('store_name') and data.get('taxpayer_name'):
         data['store_name'] = data['taxpayer_name']
     
-    # Process payment methods - combine all non-zero payment types
-    payment_methods = []
+    # Process payment methods - set individual values, defaulting to 0.00 if not found
     payment_types = ['nagdsiz', 'nagd', 'bonus', 'avans', 'nisye']
     
     for payment_type in payment_types:
         if data.get(payment_type):
             try:
+                # Keep the extracted value as float, but format as string for CSV
                 amount = float(data[payment_type])
-                if amount > 0:
-                    payment_methods.append(payment_type)
+                data[payment_type] = f"{amount:.2f}"
             except (ValueError, TypeError):
-                pass
-    
-    data['payment_methods'] = ', '.join(payment_methods) if payment_methods else None
+                data[payment_type] = "0.00"
+        else:
+            data[payment_type] = "0.00"
     
     # --- Enhanced Item Extraction ---
     items_data = []
@@ -335,13 +334,13 @@ def process_receipts_folder(directory, output_file):
     # Create a DataFrame and save it to a CSV file
     df = pd.DataFrame(all_receipts_data)
     
-    # Define the exact 26 columns in the required order (added refund_time)
+    # Define the exact 30 columns in the required order (replaced payment_methods with 5 payment types)
     column_order = [
         'filename', 'store_name', 'store_address', 'store_code', 'taxpayer_name',
         'voen', 'receipt_number', 'cashier_name', 'date', 'time',
         'item_name', 'quantity', 'unit_price', 'line_total', 'subtotal',
-        'vat_18_percent', 'total_tax', 'payment_methods', 'queue_number',
-        'nka_model', 'nka_serial', 'fiscal_id', 'nmq_registration',
+        'vat_18_percent', 'total_tax', 'nagdsiz', 'nagd', 'bonus', 'avans', 'nisye',
+        'queue_number', 'nka_model', 'nka_serial', 'fiscal_id', 'nmq_registration',
         'refund_amount', 'refund_date', 'refund_time'
     ]
     
@@ -350,7 +349,7 @@ def process_receipts_folder(directory, output_file):
         if col not in df.columns:
             df[col] = None
     
-    # Reorder columns to match the required 25-column structure
+    # Reorder columns to match the required 30-column structure
     df = df.reindex(columns=column_order)
 
     df.to_csv(output_file, index=False, encoding='utf-8')
