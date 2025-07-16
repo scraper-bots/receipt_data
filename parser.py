@@ -29,31 +29,68 @@ def parse_receipt_text(text, filename):
               on the receipt, including all 25 required columns.
     """
     
-    # Comprehensive regex patterns for all 25 fields
+    # Enhanced regex patterns handling OCR variations and character encoding issues
     patterns = {
-        'store_name': r'Obyektin adı:\s*(.*?)(?:\n|$)',
-        'store_address': r'Obyektin ünvanı:\s*(.*?)(?:\n|$)',
-        'store_code': r'Obyektin kodu:\s*(.*?)(?:\n|$)',
-        'taxpayer_name': r'Vergi ödəyicisinin adı:\s*(.*?)(?:\n|$)',
-        'voen': r'VÖEN:\s*(\d+)',
-        'receipt_number': r'Satış çeki №\s*(\d+)',
-        'cashier_name': r'Kassir:\s*(.*?)(?:\s+Tarix|\n|$)',
-        'datetime': r'Tarix:\s*(\d{2}\.\d{2}\.\d{4})\s*Vaxt:\s*(\d{2}:\d{2}:\d{2})',
+        # Handle OCR variations for store name - multiple possible formats
+        'store_name': r'(?:Obyektin|əri)\s*(?:adı|ад)[:\s]*(.*?)(?:\n|$)',
+        
+        # Store address with variations
+        'store_address': r'(?:Obyektin\s*ünvanı|fani)[:\s]*(.*?)(?:\n|$)',
+        
+        # Store code with variations  
+        'store_code': r'(?:Obyektin\s*kodu|ÖV.*?obyektin\s*kodu)[:\s]*([\d\-]+)',
+        
+        # Taxpayer name - handle multiline
+        'taxpayer_name': r'Vergi\s*ödəyicisinin\s*adı[:\s]*(.*?)(?:\n.*?)?(?:\nVÖEN|\nMƏHDUD|\nCƏMİYYƏTİ|\n|$)',
+        
+        # VOEN number
+        'voen': r'VÖEN[:\s]*(\d+)',
+        
+        # Receipt number - handle special characters
+        'receipt_number': r'Satış\s*çeki\s*[№#NоМә]*\s*(\d+)',
+        
+        # Cashier name - exclude date patterns
+        'cashier_name': r'Kassir[:\s]*((?!Tarix)[^\n\d]*?)(?:\s+Tarix|\n|$)',
+        
+        # Date and time with better matching
+        'datetime': r'Tarix[:\s]*(\d{2}\.\d{2}\.\d{4})\s*Vaxt[:\s]*(\d{2}:\d{2}:\d{2})',
+        
+        # Subtotal with variations
         'subtotal': r'Cəmi\s+(\d+\.\d{2})',
-        'vat_18_percent': r'ƏDV 18%\s*=\s*(\d+\.\d{2})',
-        'total_tax': r'Toplam vergi\s*=\s*(\d+\.\d{2})',
-        'nagdsiz': r'Nağdsız:\s*(\d+\.\d{2})',
-        'nagd': r'Nağd:\s*(\d+\.\d{2})',
-        'bonus': r'Bonus:\s*(\d+\.\d{2})',
-        'avans': r'Avans\s*\(beh\):\s*(\d+\.\d{2})',
-        'nisye': r'Nisyə:\s*(\d+\.\d{2})',
-        'queue_number': r'Növbə ərzində vurulmuş çek sayı:\s*(\d+)',
-        'nka_model': r'NKA-nın modeli:\s*(.*?)(?:\n|$)',
-        'nka_serial': r'NKA-nın zavod nömrəsi:\s*(.*?)(?:\n|$)',
-        'fiscal_id': r'Fiskal ID:\s*(\S+)',
-        'nmq_registration': r'NMQ-nin qeydiyyat nömrəsi:\s*(.*?)(?:\n|$)',
-        'refund_amount': r'Geri qaytarılan məbləğ:\s*(\d+\.\d{2})',
-        'refund_date': r'Geri qaytarılma tarixi:\s*(\d{2}\.\d{2}\.\d{4}\s+\d{2}:\d{2})'
+        
+        # VAT 18% with multiple formats
+        'vat_18_percent': r'ƏDV\s*18%?\s*=\s*(\d+\.\d{2})',
+        
+        # Total tax
+        'total_tax': r'Toplam\s*vergi\s*=\s*(\d+\.\d{2})',
+        
+        # Payment methods - handle OCR variations
+        'nagdsiz': r'Nağdsız[:\s]*(\d+\.\d{2})',
+        'nagd': r'Nağd[:\s]*(\d+\.\d{2})',
+        'bonus': r'Bonus[:\s]*(\d+\.\d{2})',
+        'avans': r'Avans\s*\([^)]*\)[:\s]*(\d+\.\d{2})',
+        'nisye': r'Nisyə[:\s]*(\d+\.\d{2})',
+        
+        # Queue number
+        'queue_number': r'Növbə\s*ərzində\s*vurulmuş\s*çek\s*sayı[:\s]*(\d+)',
+        
+        # NKA model
+        'nka_model': r'NKA-nın\s*modeli[:\s]*(.*?)(?:\n|$)',
+        
+        # NKA serial number
+        'nka_serial': r'NKA-nın\s*zavod\s*nömrəsi[:\s]*(.*?)(?:\n|$)',
+        
+        # Fiscal ID - handle İ/I variations
+        'fiscal_id': r'Fiskal\s*[İI]D[:\s]*(\S+)',
+        
+        # NMQ registration
+        'nmq_registration': r'NMQ-nin\s*qeydiyyat\s*nömrəsi[:\s]*(.*?)(?:\n|$)',
+        
+        # Refund amount
+        'refund_amount': r'Geri\s*qaytarılan\s*məbləğ[:\s]*(\d+\.\d{2})',
+        
+        # Refund date
+        'refund_date': r'Geri\s*qaytarılma\s*tarixi[:\s]*(\d{2}\.\d{2}\.\d{4}\s+\d{2}:\d{2})'
     }
 
     # Extract general receipt info
@@ -82,8 +119,36 @@ def parse_receipt_text(text, filename):
             if key == 'datetime':
                 data['date'] = match.group(1)
                 data['time'] = match.group(2)
+            elif key == 'taxpayer_name':
+                # Clean up taxpayer name by removing extra whitespace and newlines
+                taxpayer_text = match.group(1).strip()
+                # Remove quotes and extra formatting
+                taxpayer_text = re.sub(r'["\']+', '', taxpayer_text)
+                taxpayer_text = re.sub(r'\s+', ' ', taxpayer_text)
+                data[key] = taxpayer_text
+            elif key == 'cashier_name':
+                # Clean cashier name - remove common OCR artifacts
+                cashier_text = match.group(1).strip()
+                # Skip if it looks like a date
+                if not re.match(r'.*\d{2}\.\d{2}\.\d{4}', cashier_text):
+                    data[key] = cashier_text
             else:
                 data[key] = match.group(1).strip()
+    
+    # Additional fallback patterns for critical missing fields
+    if not data.get('fiscal_id'):
+        # Try alternative fiscal ID patterns
+        fiscal_alt = re.search(r'Fiskal\s*[İI]D[:\s]*(\w+)', text, re.IGNORECASE)
+        if fiscal_alt:
+            data['fiscal_id'] = fiscal_alt.group(1).strip()
+    
+    if not data.get('store_name'):
+        # Try to extract from the first few lines
+        lines = text.split('\n')[:5]
+        for line in lines:
+            if 'YORKER' in line or 'MART' in line or 'ARAZ' in line:
+                data['store_name'] = line.strip()
+                break
     
     # Process payment methods - combine all non-zero payment types
     payment_methods = []
