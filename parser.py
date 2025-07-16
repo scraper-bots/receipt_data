@@ -76,8 +76,8 @@ def parse_receipt_text(text, filename):
         # Taxpayer name - handle multiline
         'taxpayer_name': r'Vergi\s*ödəyicisinin\s*adı[:\s]*(.*?)(?:\n.*?)?(?:\nVÖEN|\nMƏHDUD|\nCƏMİYYƏTİ|\n|$)',
         
-        # VOEN number
-        'voen': r'VÖEN[:\s]*(\d+)',
+        # VOEN number (tax ID)
+        'tax_id': r'VÖEN[:\s]*(\d+)',
         
         # Receipt number - handle special characters
         'receipt_number': r'Satış\s*çeki\s*[№#NоМә]*\s*(\d+)',
@@ -98,26 +98,26 @@ def parse_receipt_text(text, filename):
         'total_tax': r'Toplam\s*vergi\s*=\s*(\d+\.\d{2})',
         
         # Payment methods - handle OCR variations
-        'nagdsiz': r'Nağdsız[:\s]*(\d+\.\d{2})',
-        'nagd': r'Nağd[:\s]*(\d+\.\d{2})',
-        'bonus': r'Bonus[:\s]*(\d+\.\d{2})',
-        'avans': r'Avans\s*\([^)]*\)[:\s]*(\d+\.\d{2})',
-        'nisye': r'Nisyə[:\s]*(\d+\.\d{2})',
+        'cashless_payment': r'Nağdsız[:\s]*(\d+\.\d{2})',
+        'cash_payment': r'Nağd[:\s]*(\d+\.\d{2})',
+        'bonus_payment': r'Bonus[:\s]*(\d+\.\d{2})',
+        'advance_payment': r'Avans\s*\([^)]*\)[:\s]*(\d+\.\d{2})',
+        'credit_payment': r'Nisyə[:\s]*(\d+\.\d{2})',
         
         # Queue number
         'queue_number': r'Növbə\s*ərzində\s*vurulmuş\s*çek\s*sayı[:\s]*(\d+)',
         
-        # NKA model
-        'nka_model': r'NKA-nın\s*modeli[:\s]*(.*?)(?:\n|$)',
+        # NKA model (cash register model)
+        'cash_register_model': r'NKA-nın\s*modeli[:\s]*(.*?)(?:\n|$)',
         
-        # NKA serial number
-        'nka_serial': r'NKA-nın\s*zavod\s*nömrəsi[:\s]*(.*?)(?:\n|$)',
+        # NKA serial number (cash register serial)
+        'cash_register_serial': r'NKA-nın\s*zavod\s*nömrəsi[:\s]*(.*?)(?:\n|$)',
         
         # Fiscal ID - handle İ/I variations
         'fiscal_id': r'Fiskal\s*[İI]D[:\s]*(\S+)',
         
-        # NMQ registration
-        'nmq_registration': r'NMQ-nin\s*qeydiyyat\s*nömrəsi[:\s]*(.*?)(?:\n|$)',
+        # NMQ registration (fiscal registration)
+        'fiscal_registration': r'NMQ-nin\s*qeydiyyat\s*nömrəsi[:\s]*(.*?)(?:\n|$)',
         
         # Refund amount
         'refund_amount': r'Geri\s*qaytarılan\s*məbləğ[:\s]*(\d+\.\d{2})',
@@ -132,10 +132,10 @@ def parse_receipt_text(text, filename):
     # Initialize all 30 columns with None (replaced payment_methods with 5 payment types)
     columns = [
         'filename', 'store_name', 'store_address', 'store_code', 'taxpayer_name',
-        'voen', 'receipt_number', 'cashier_name', 'date', 'time',
+        'tax_id', 'receipt_number', 'cashier_name', 'date', 'time',
         'item_name', 'quantity', 'unit_price', 'line_total', 'subtotal',
-        'vat_18_percent', 'total_tax', 'nagdsiz', 'nagd', 'bonus', 'avans', 'nisye',
-        'queue_number', 'nka_model', 'nka_serial', 'fiscal_id', 'nmq_registration',
+        'vat_18_percent', 'total_tax', 'cashless_payment', 'cash_payment', 'bonus_payment', 'advance_payment', 'credit_payment',
+        'queue_number', 'cash_register_model', 'cash_register_serial', 'fiscal_id', 'fiscal_registration',
         'refund_amount', 'refund_date', 'refund_time'
     ]
     
@@ -190,7 +190,7 @@ def parse_receipt_text(text, filename):
         data['store_name'] = data['taxpayer_name']
     
     # Process payment methods - set individual values, defaulting to 0.00 if not found
-    payment_types = ['nagdsiz', 'nagd', 'bonus', 'avans', 'nisye']
+    payment_types = ['cashless_payment', 'cash_payment', 'bonus_payment', 'advance_payment', 'credit_payment']
     
     for payment_type in payment_types:
         if data.get(payment_type):
@@ -337,10 +337,10 @@ def process_receipts_folder(directory, output_file):
     # Define the exact 30 columns in the required order (replaced payment_methods with 5 payment types)
     column_order = [
         'filename', 'store_name', 'store_address', 'store_code', 'taxpayer_name',
-        'voen', 'receipt_number', 'cashier_name', 'date', 'time',
+        'tax_id', 'receipt_number', 'cashier_name', 'date', 'time',
         'item_name', 'quantity', 'unit_price', 'line_total', 'subtotal',
-        'vat_18_percent', 'total_tax', 'nagdsiz', 'nagd', 'bonus', 'avans', 'nisye',
-        'queue_number', 'nka_model', 'nka_serial', 'fiscal_id', 'nmq_registration',
+        'vat_18_percent', 'total_tax', 'cashless_payment', 'cash_payment', 'bonus_payment', 'advance_payment', 'credit_payment',
+        'queue_number', 'cash_register_model', 'cash_register_serial', 'fiscal_id', 'fiscal_registration',
         'refund_amount', 'refund_date', 'refund_time'
     ]
     
