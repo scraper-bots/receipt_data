@@ -122,21 +122,21 @@ def parse_receipt_text(text, filename):
         # Refund amount
         'refund_amount': r'Geri\s*qaytarılan\s*məbləğ[:\s]*(\d+\.\d{2})',
         
-        # Refund date
-        'refund_date': r'Geri\s*qaytarılma\s*tarixi[:\s]*(\d{2}\.\d{2}\.\d{4}\s+\d{2}:\d{2})'
+        # Refund date and time
+        'refund_datetime': r'Geri\s*qaytarılma\s*tarixi[:\s]*(\d{2}\.\d{2}\.\d{4})\s+(\d{2}:\d{2})'
     }
 
     # Extract general receipt info
     data = {}
     
-    # Initialize all 25 columns with None
+    # Initialize all 30 columns with None (replaced payment_methods with 5 payment types)
     columns = [
         'filename', 'store_name', 'store_address', 'store_code', 'taxpayer_name',
         'voen', 'receipt_number', 'cashier_name', 'date', 'time',
         'item_name', 'quantity', 'unit_price', 'line_total', 'subtotal',
-        'vat_18_percent', 'total_tax', 'payment_methods', 'queue_number',
-        'nka_model', 'nka_serial', 'fiscal_id', 'nmq_registration',
-        'refund_amount', 'refund_date'
+        'vat_18_percent', 'total_tax', 'nagdsiz', 'nagd', 'bonus', 'avans', 'nisye',
+        'queue_number', 'nka_model', 'nka_serial', 'fiscal_id', 'nmq_registration',
+        'refund_amount', 'refund_date', 'refund_time'
     ]
     
     for col in columns:
@@ -152,6 +152,9 @@ def parse_receipt_text(text, filename):
             if key == 'datetime':
                 data['date'] = match.group(1)
                 data['time'] = match.group(2)
+            elif key == 'refund_datetime':
+                data['refund_date'] = match.group(1)
+                data['refund_time'] = match.group(2)
             elif key == 'taxpayer_name':
                 # Clean up taxpayer name by removing extra whitespace and newlines
                 taxpayer_text = match.group(1).strip()
@@ -332,14 +335,14 @@ def process_receipts_folder(directory, output_file):
     # Create a DataFrame and save it to a CSV file
     df = pd.DataFrame(all_receipts_data)
     
-    # Define the exact 25 columns in the required order
+    # Define the exact 26 columns in the required order (added refund_time)
     column_order = [
         'filename', 'store_name', 'store_address', 'store_code', 'taxpayer_name',
         'voen', 'receipt_number', 'cashier_name', 'date', 'time',
         'item_name', 'quantity', 'unit_price', 'line_total', 'subtotal',
         'vat_18_percent', 'total_tax', 'payment_methods', 'queue_number',
         'nka_model', 'nka_serial', 'fiscal_id', 'nmq_registration',
-        'refund_amount', 'refund_date'
+        'refund_amount', 'refund_date', 'refund_time'
     ]
     
     # Ensure all columns exist in the dataframe
