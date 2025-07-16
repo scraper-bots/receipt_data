@@ -40,7 +40,7 @@ This repository contains a Python script designed to automate the download of pa
 ├── LICENSE
 ├── README.md
 ├── fiscal\_ids.txt
-├── main.py
+├── scraper.py
 ├── receipts/
 └── requirements.txt
 
@@ -49,7 +49,7 @@ This repository contains a Python script designed to automate the download of pa
 - **`LICENSE`**: License for this repository.
 - **`README.md`**: This documentation file.
 - **`fiscal_ids.txt`**: List of fiscal IDs (one per line) to fetch receipts.
-- **`main.py`**: Main script to download receipts.
+- **`scraper.py`**: Main script to download receipts.
 - **`receipts/`**: Output directory (auto-created).
 - **`requirements.txt`**: Python dependencies.
 
@@ -115,7 +115,7 @@ AnotherFiscalID123
 2. **Run the Script**:
 
 ```bash
-python main.py
+python scraper.py
 ```
 
 3. **View the Output**:
@@ -126,7 +126,7 @@ Downloaded receipts will appear in the `receipts/` directory, named after their 
 
 ## ⚙️ Configuration
 
-Edit these variables in `main.py` to adjust functionality:
+Edit these variables in `scraper.py` to adjust functionality:
 
 ```python
 BASE_URL = "https://monitoring.e-kassa.gov.az/pks-monitoring/2.0.0/documents/"
