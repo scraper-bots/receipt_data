@@ -8,8 +8,9 @@ import logging
 from openai import OpenAI
 from dotenv import load_dotenv
 import time
-from concurrent.futures import ThreadPoolExecutor, as_completed
+from concurrent.futures import ThreadPoolExecutor
 import threading
+# Removed unused imports for cleaner code
 
 # Load environment variables
 load_dotenv()
@@ -21,8 +22,8 @@ logger = logging.getLogger(__name__)
 # --- CONFIGURATION ---
 RECEIPTS_DIR = 'data/receipts'
 OUTPUT_CSV = 'data/ai_improved.csv'
-BATCH_SIZE = 1  # Process one at a time for maximum reliability
-MAX_WORKERS = 1  # Single worker for stability
+BATCH_SIZE = 10  # Larger batches for speed
+MAX_WORKERS = 5  # More concurrent workers for parallel processing
 
 # Initialize OpenAI client
 client = OpenAI(api_key=os.getenv('openai'))
@@ -31,12 +32,57 @@ client = OpenAI(api_key=os.getenv('openai'))
 counter_lock = threading.Lock()
 processed_count = 0
 
-def extract_items_with_ai(ocr_text, filename, max_retries=3):
+def extract_items_with_ai(ocr_text, filename, max_retries=2):
     """
     Improved AI extraction that focuses on extracting ALL items with realistic values.
     """
     
-    system_prompt = """You are an expert at extracting ALL items from Azerbaijani receipt OCR text.
+    system_prompt = """You are an advanced AI specialist in Azerbaijani fiscal document processing with expertise in OCR error correction and retail transaction analysis.
+
+MISSION: Extract ALL items from Azerbaijani receipt OCR text with maximum accuracy and intelligent error correction.
+
+ADVANCED PROCESSING REQUIREMENTS:
+
+1. COMPREHENSIVE ITEM EXTRACTION:
+   - Analyze the entire receipt systematically
+   - Identify the items section marker: "Məhsulun adı Say Qiymət Cəmi"
+   - Extract EVERY single item (typically 2-15 items per receipt)
+   - Never stop at the first item - process the complete list
+
+2. INTELLIGENT OCR ERROR CORRECTION:
+   - Decimal misinterpretation: "1000" → "1.0", "2000" → "2.0", "13000" → "1.0"
+   - Character confusion: "0" vs "O", "1" vs "l", "5" vs "S"
+   - Quantity validation: Most items have 1-10 units (flag >50 as suspicious)
+   - Price validation: Apply Azerbaijan market knowledge for realistic pricing
+
+3. AZERBAIJAN MARKET INTELLIGENCE:
+   - Water/beverages: 0.4-2.0 AZN
+   - Bread/bakery: 0.3-4.0 AZN  
+   - Dairy products: 1.0-8.0 AZN
+   - Snacks/confectionery: 0.5-5.0 AZN
+   - Household items: 0.2-20.0 AZN
+   - Adjust unrealistic prices using market knowledge
+
+4. MATHEMATICAL VALIDATION & CORRECTION:
+   - Verify: quantity × unit_price = line_total
+   - If mismatch: intelligently correct the most likely error
+   - Prioritize line_total accuracy (receipt totals are usually correct)
+
+5. ADVANCED TEXT CLEANING:
+   - Remove VAT indicators: "ƏDV:", "*ƏDV", "vƏDV", "ƏDV-dən azad"
+   - Clean Unicode artifacts and OCR noise
+   - Standardize item names for consistency
+
+6. CONTEXTUAL UNDERSTANDING:
+   - Use receipt context clues (store type, location, total amount)
+   - Apply logical consistency across all items
+   - Maintain receipt-level metadata consistency
+
+QUALITY ASSURANCE:
+- Every item must have valid name, quantity, price, and total
+- All calculations must be mathematically correct
+- All items from the receipt must be included
+- Prices must be realistic for Azerbaijan market
 
 CRITICAL REQUIREMENTS:
 1. Extract EVERY item from the receipt - most receipts have 2-15 items
@@ -110,21 +156,23 @@ Return ONLY a valid JSON array with one object per item found."""
     
     for attempt in range(max_retries):
         try:
-            logger.info(f"Attempting AI extraction for {filename}, attempt {attempt + 1}/{max_retries}")
+            # Reduced logging for speed
+            if attempt > 0:
+                logger.info(f"Retry {attempt + 1}/{max_retries} for {filename}")
             
             response = client.chat.completions.create(
-                model="gpt-4o-mini",
+                model="gpt-4o",  # Upgraded to more advanced model
                 messages=[
                     {"role": "system", "content": system_prompt},
                     {"role": "user", "content": user_prompt}
                 ],
-                temperature=0.1,
-                max_tokens=4000,
-                timeout=30.0  # 30 second timeout
+                temperature=0.05,  # Even more deterministic
+                max_tokens=8000,   # Increased for better extraction
+                timeout=30.0  # Optimized timeout for speed
             )
             
             ai_response = response.choices[0].message.content.strip()
-            logger.info(f"AI response for {filename}: {ai_response[:200]}...")
+            # Reduced verbose logging for speed
             
             # Remove code block markers if present
             if ai_response.startswith('```json'):
@@ -390,30 +438,29 @@ def process_receipt_with_ai(filepath, filename):
 
 def process_batch(batch_files, batch_num):
     """
-    Process a batch of receipts with threading.
+    Process a batch of receipts with optimized threading.
     """
     
     batch_results = []
     
     with ThreadPoolExecutor(max_workers=MAX_WORKERS) as executor:
-        # Submit all files in batch
-        future_to_file = {}
+        # Submit all files in batch with optimized futures
+        futures = []
         for filename in batch_files:
             filepath = os.path.join(RECEIPTS_DIR, filename)
             future = executor.submit(process_receipt_with_ai, filepath, filename)
-            future_to_file[future] = filename
+            futures.append((future, filename))
         
-        # Collect results
-        for future in as_completed(future_to_file):
-            filename = future_to_file[future]
+        # Collect results with timeout optimization
+        for future, filename in futures:
             try:
-                result = future.result()
+                result = future.result(timeout=60)  # 60s timeout per receipt
                 batch_results.extend(result)  # Each receipt returns multiple items
             except Exception as e:
                 logger.error(f"Error processing {filename}: {e}")
                 batch_results.extend(create_fallback_data(filename))
     
-    logger.info(f"Completed batch {batch_num} with {len(batch_results)} total records")
+    logger.info(f"Batch {batch_num}: {len(batch_results)} records")
     return batch_results
 
 def main():
@@ -426,7 +473,7 @@ def main():
         logger.error("OpenAI API key not found in .env file")
         return
     
-    logger.info("Starting IMPROVED AI-enhanced receipt processing...")
+    logger.info("🚀 Starting OPTIMIZED AI-enhanced receipt processing...")
     
     all_receipts_data = []
     
@@ -434,20 +481,31 @@ def main():
     image_files = [f for f in os.listdir(RECEIPTS_DIR) if f.lower().endswith(('.jpeg', '.jpg', '.png', '.tiff'))]
     
     total_files = len(image_files)
-    logger.info(f"Found {total_files} receipt images to process")
+    total_batches = (total_files + BATCH_SIZE - 1) // BATCH_SIZE
+    logger.info(f"📊 Processing {total_files} receipts in {total_batches} batches ({BATCH_SIZE} per batch, {MAX_WORKERS} workers)")
     
-    # Process in batches
+    # Process in batches with progress tracking
+    start_time = time.time()
     for i in range(0, total_files, BATCH_SIZE):
         batch_files = image_files[i:i+BATCH_SIZE]
         batch_num = (i // BATCH_SIZE) + 1
         
-        logger.info(f"Processing batch {batch_num}/{(total_files + BATCH_SIZE - 1) // BATCH_SIZE}")
+        batch_start = time.time()
+        logger.info(f"⚡ Batch {batch_num}/{total_batches} ({len(batch_files)} files)")
         
         batch_results = process_batch(batch_files, batch_num)
         all_receipts_data.extend(batch_results)
         
-        # Rate limiting between batches
-        time.sleep(3)
+        batch_time = time.time() - batch_start
+        avg_time_per_receipt = batch_time / len(batch_files)
+        remaining_files = total_files - (i + len(batch_files))
+        eta = (remaining_files / BATCH_SIZE) * batch_time
+        
+        logger.info(f"✅ Batch {batch_num} completed in {batch_time:.1f}s ({avg_time_per_receipt:.1f}s/receipt) - ETA: {eta:.0f}s")
+        
+        # Minimal rate limiting for speed
+        if batch_num < total_batches:
+            time.sleep(0.5)
     
     # Create DataFrame
     df = pd.DataFrame(all_receipts_data)
@@ -468,25 +526,42 @@ def main():
         if col not in df.columns:
             df[col] = None
     
-    # Reorder columns
-    df = df.reindex(columns=column_order)
+    # Reorder columns - handle pandas version differences
+    try:
+        df = df.reindex(columns=column_order)
+    except Exception as e:
+        logger.warning(f"Column reordering failed: {e}. Using existing column order.")
+        # Ensure basic required columns exist
+        for col in ['filename', 'item_name', 'quantity', 'unit_price', 'line_total']:
+            if col not in df.columns:
+                df[col] = None
     
-    # Save to CSV
-    df.to_csv(OUTPUT_CSV, index=False, encoding='utf-8')
+    # Save to CSV - fix pandas version compatibility
+    try:
+        df.to_csv(OUTPUT_CSV, index=False, encoding='utf-8')
+    except AttributeError:
+        # Fallback for older pandas versions
+        df.reset_index(drop=True).to_csv(OUTPUT_CSV, index=False, encoding='utf-8')
     
-    logger.info(f"✅ IMPROVED AI extraction complete! Data saved to '{OUTPUT_CSV}'")
-    logger.info(f"Total records: {len(df)}")
-    logger.info(f"Unique receipts: {len(df['filename'].unique())}")
+    total_time = time.time() - start_time
+    avg_time_per_receipt = total_time / total_files
     
-    # Show summary statistics
-    print("\n=== IMPROVED EXTRACTION SUMMARY ===")
-    print(f"Total receipts processed: {len(df['filename'].unique())}")
-    print(f"Total items extracted: {len(df)}")
-    print(f"Average items per receipt: {len(df) / len(df['filename'].unique()):.1f}")
-    print(f"Receipts with store names: {len(df[df['store_name'].notna()])}")
-    print(f"Receipts with addresses: {len(df[df['store_address'].notna()])}")
-    print(f"Receipts with item data: {len(df[df['item_name'].notna()])}")
-    print(f"Receipts with date/time: {len(df[df['date'].notna()])}")
+    logger.info(f"🎯 OPTIMIZED AI extraction complete! Data saved to '{OUTPUT_CSV}'")
+    logger.info(f"⏱️ Total processing time: {total_time:.1f}s ({avg_time_per_receipt:.1f}s/receipt)")
+    logger.info(f"📊 Total records: {len(df)} | Unique receipts: {len(df['filename'].unique())}")
+    
+    # Show performance summary
+    print("\n=== 🚀 OPTIMIZED EXTRACTION SUMMARY ===")
+    print(f"🏁 Processing completed in {total_time:.1f} seconds")
+    print(f"⚡ Average speed: {avg_time_per_receipt:.1f}s per receipt")
+    print(f"📁 Total receipts processed: {len(df['filename'].unique())}")
+    print(f"📋 Total items extracted: {len(df)}")
+    print(f"📈 Average items per receipt: {len(df) / len(df['filename'].unique()):.1f}")
+    print(f"🏪 Receipts with store names: {len(df[df['store_name'].notna()])}")
+    print(f"📍 Receipts with addresses: {len(df[df['store_address'].notna()])}")
+    print(f"🛒 Receipts with item data: {len(df[df['item_name'].notna()])}")
+    print(f"📅 Receipts with date/time: {len(df[df['date'].notna()])}")
+    print(f"💰 Processing cost est: ${total_files * 0.03:.2f} (approx)")
 
 if __name__ == '__main__':
     main()

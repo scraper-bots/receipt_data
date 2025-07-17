@@ -540,9 +540,11 @@ OUTPUT_CSV = 'data/traditional.csv'  # or 'data/ai_improved.csv'
 ### AI Parser Configuration
 ```python
 # ai_parse.py
-BATCH_SIZE = 10          # Process 10 receipts at a time
-MAX_WORKERS = 3          # Limit concurrent API calls
-MODEL = "gpt-4o-mini"    # OpenAI model to use
+BATCH_SIZE = 10          # Optimized batch size for speed
+MAX_WORKERS = 5          # Increased concurrent workers
+MODEL = "gpt-4o"         # Advanced OpenAI model for better accuracy
+TIMEOUT = 30.0           # Optimized timeout for speed
+RETRY_ATTEMPTS = 2       # Reduced retries for faster processing
 ```
 
 ---
@@ -568,11 +570,18 @@ MODEL = "gpt-4o-mini"    # OpenAI model to use
 
 ### Performance Optimization
 
+**Speed Improvements**:
+1. **Parallel Processing**: 5 concurrent workers for faster throughput
+2. **Optimized Batching**: Process 10 receipts per batch
+3. **Reduced Latency**: Minimal rate limiting (0.5s between batches)
+4. **Smart Timeouts**: 30s timeout per API call, 2 retry attempts
+5. **Progress Tracking**: Real-time ETA and speed metrics
+
 **For Large Datasets**:
-1. Use AI parser batch processing
-2. Implement caching for repeated extractions
-3. Consider parallel processing for traditional parser
-4. Monitor API usage and costs
+1. Increase `MAX_WORKERS` to 8-10 for more parallelism
+2. Adjust `BATCH_SIZE` to 15-20 for larger batches
+3. Monitor API rate limits and costs
+4. Consider caching for repeated extractions
 
 ---
 
