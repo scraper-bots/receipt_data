@@ -42,11 +42,11 @@ CRITICAL REQUIREMENTS:
 1. Extract EVERY item from the receipt - most receipts have multiple items
 2. Look for the items section that starts with "Məhsulun adı Say Qiymət Cəmi" 
 3. Each item should have: name, quantity, unit_price, line_total
-4. Fix OCR errors in quantities - quantities >100 are usually wrong:
-   - 1000 → 1.0 (for single items)
-   - 2000 → 2.0 (for 2 items)  
+4. Fix OCR errors in quantities - decimal places get misread:
+   - 1000 → 1.0 (OCR misreads decimal as 000)
+   - 2000 → 2.0 (OCR misreads decimal as 000)  
    - 13000 → 1.0 (OCR error)
-   - Keep small realistic quantities (1-10 typical)
+   - Keep small realistic quantities (1-10 typical for most items)
 5. Fix prices to be realistic for Azerbaijan:
    - Water: 0.5-1.5 AZN
    - Bread/cookies: 0.5-3 AZN
@@ -98,9 +98,9 @@ Required fields for each item:
 }}
 
 EXAMPLES OF QUANTITY FIXES:
-- "Paket Araz 31\"60 5 K 1000 0.05 0.05" → quantity: 5, unit_price: 0.05, line_total: 0.25
-- "SIRAB QAZSIZ SU PET 2.000 0.89 1.18" → quantity: 2, unit_price: 0.89, line_total: 1.78
-- "BIQ BON QOVYAD QRİL 1000 210 2.10" → quantity: 1, unit_price: 2.10, line_total: 2.10
+- "Paket Araz 31\"60 5 K 1.000 0.05 0.05" → quantity: 1, unit_price: 0.05, line_total: 0.05
+- "SIRAB QAZSIZ SU PET 2.000 0.59 1.18" → quantity: 2, unit_price: 0.59, line_total: 1.18
+- "BIQ BON QOVYAD QRİL 1.000 2.10 2.10" → quantity: 1, unit_price: 2.10, line_total: 2.10
 
 OCR TEXT:
 {ocr_text}
@@ -148,6 +148,7 @@ def validate_and_clean_item(item):
     """
     Validate and clean individual item data.
     """
+    
     
     try:
         # Ensure required fields exist
