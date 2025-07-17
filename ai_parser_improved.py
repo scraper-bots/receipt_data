@@ -19,10 +19,10 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 # --- CONFIGURATION ---
-RECEIPTS_DIR = 'receipts'
-OUTPUT_CSV = 'receipts_ai_enhanced.csv'
-BATCH_SIZE = 10  # Process 10 receipts at a time
-MAX_WORKERS = 3  # Limit concurrent API calls
+RECEIPTS_DIR = 'data/receipts'
+OUTPUT_CSV = 'data/receipts_ai_improved.csv'
+BATCH_SIZE = 2  # Minimal batches for completion
+MAX_WORKERS = 1  # Single worker for stability
 
 # Initialize OpenAI client
 client = OpenAI(api_key=os.getenv('openai'))
@@ -31,74 +31,81 @@ client = OpenAI(api_key=os.getenv('openai'))
 counter_lock = threading.Lock()
 processed_count = 0
 
-def extract_text_with_ai(ocr_text, filename):
+def extract_items_with_ai(ocr_text, filename):
     """
-    Use OpenAI API to extract structured data from OCR text with error correction.
-    """
-    
-    system_prompt = """You are an expert at extracting structured data from Azerbaijani receipt OCR text. 
-    
-    Your task is to:
-    1. Extract all available information into the specified 30 fields
-    2. Fix mathematical calculation errors (ensure quantity × unit_price = line_total)
-    3. Validate and correct suspicious quantities (if >100, check if it's likely an OCR error)
-    4. Extract multiple payment methods if present
-    5. Clean item names by removing VAT codes and prefixes
-    6. Format all monetary values to 2 decimal places
-    7. Return "null" for missing fields, not empty strings
-    
-    Important: Be very careful with quantities. If you see a quantity >100, it's likely an OCR error where decimal points were missed.
-    For example, 1000.0 units of bread is unrealistic - it should probably be 1.0 or 10.0.
+    Improved AI extraction that focuses on extracting ALL items with realistic values.
     """
     
-    user_prompt = f"""Extract data from this Azerbaijani receipt OCR text into exactly these 30 fields:
+    system_prompt = """You are an expert at extracting ALL items from Azerbaijani receipt OCR text.
 
-    REQUIRED FIELDS (return as JSON):
-    {{
-        "filename": "{filename}",
-        "store_name": "Store/business name",
-        "store_address": "Store address",
-        "store_code": "Store/object code",
-        "taxpayer_name": "Taxpayer name (Vergi ödəyicisinin adı)",
-        "tax_id": "VOEN tax identification number",
-        "receipt_number": "Receipt/check number (Satış çeki)",
-        "cashier_name": "Cashier name (Kassir)",
-        "date": "Transaction date (DD.MM.YYYY format)",
-        "time": "Transaction time (HH:MM:SS format)",
-        "item_name": "Product/item name (cleaned, no VAT codes)",
-        "quantity": "Item quantity (VALIDATE if >100, likely OCR error)",
-        "unit_price": "Price per unit",
-        "line_total": "Total for item (must equal quantity × unit_price)",
-        "subtotal": "Receipt subtotal (Cəmi)",
-        "vat_18_percent": "VAT 18% amount (ƏDV 18%)",
-        "total_tax": "Total tax amount (Toplam vergi)",
-        "cashless_payment": "Cashless payment amount (Nağdsız)",
-        "cash_payment": "Cash payment amount (Nağd)",
-        "bonus_payment": "Bonus payment amount (Bonus)",
-        "advance_payment": "Advance payment amount (Avans)",
-        "credit_payment": "Credit payment amount (Nisyə)",
-        "queue_number": "Queue/sequence number (Növbə)",
-        "cash_register_model": "Cash register model (NKA-nın modeli)",
-        "cash_register_serial": "Cash register serial (NKA-nın zavod nömrəsi)",
-        "fiscal_id": "Fiscal ID (Fiskal ID)",
-        "fiscal_registration": "Fiscal registration (NMQ-nin qeydiyyat nömrəsi)",
-        "refund_amount": "Refund amount (Geri qaytarılan məbləğ)",
-        "refund_date": "Refund date (DD.MM.YYYY format)",
-        "refund_time": "Refund time (HH:MM format)"
-    }}
+CRITICAL REQUIREMENTS:
+1. Extract EVERY item from the receipt - most receipts have multiple items
+2. Look for the items section that starts with "Məhsulun adı Say Qiymət Cəmi" 
+3. Each item should have: name, quantity, unit_price, line_total
+4. Fix OCR errors in quantities - quantities >100 are usually wrong:
+   - 1000 → 1.0 (for single items)
+   - 2000 → 2.0 (for 2 items)  
+   - 13000 → 1.0 (OCR error)
+   - Keep small realistic quantities (1-10 typical)
+5. Fix prices to be realistic for Azerbaijan:
+   - Water: 0.5-1.5 AZN
+   - Bread/cookies: 0.5-3 AZN
+   - Drinks: 1-5 AZN
+   - If unit_price seems wrong, adjust to realistic value
+6. Ensure quantity × unit_price = line_total (fix calculation errors)
+7. Clean item names: remove ƏDV codes, quotes, prefixes
+8. Return ALL items found, not just the first one
 
-    CRITICAL VALIDATION RULES:
-    - If quantity × unit_price ≠ line_total, fix the calculation
-    - If quantity > 100, it's likely an OCR error - correct it to realistic value
-    - Clean item names: remove "ƏDV:", "Ticarət əlavəsi:", quotes, etc.
-    - Format all prices to 2 decimal places
-    - Use "null" for missing fields
-    - Extract ALL payment methods found
+The receipt-level info should be the SAME for each item (store info, date, etc.)
+"""
+    
+    user_prompt = f"""Extract ALL items from this Azerbaijani receipt. Return a JSON array where each object has these 30 fields:
 
-    OCR TEXT:
-    {ocr_text}
+RECEIPT: {filename}
 
-    Return ONLY a valid JSON object with the 30 fields above."""
+Required fields for each item:
+{{
+    "filename": "{filename}",
+    "store_name": "Store/business name (same for all items)",
+    "store_address": "Store address (same for all items)", 
+    "store_code": "Store code (same for all items)",
+    "taxpayer_name": "Taxpayer name (same for all items)",
+    "tax_id": "VOEN number (same for all items)",
+    "receipt_number": "Receipt number (same for all items)",
+    "cashier_name": "Cashier name (same for all items)",
+    "date": "DD.MM.YYYY (same for all items)",
+    "time": "HH:MM:SS (same for all items)",
+    "item_name": "Clean item name (NO ƏDV codes, quotes, or prefixes)",
+    "quantity": "Realistic quantity (fix OCR errors: 1000→1, 2000→2, etc.)",
+    "unit_price": "Realistic price per unit in AZN (fix if unrealistic)",
+    "line_total": "quantity × unit_price (must be mathematically correct)",
+    "subtotal": "Receipt total (same for all items)",
+    "vat_18_percent": "VAT amount (same for all items)",
+    "total_tax": "Total tax (same for all items)",
+    "cashless_payment": "Cashless amount (same for all items)",
+    "cash_payment": "Cash amount (same for all items)", 
+    "bonus_payment": "Bonus amount (same for all items)",
+    "advance_payment": "Advance amount (same for all items)",
+    "credit_payment": "Credit amount (same for all items)",
+    "queue_number": "Queue number (same for all items)",
+    "cash_register_model": "Register model (same for all items)",
+    "cash_register_serial": "Register serial (same for all items)",
+    "fiscal_id": "Fiscal ID (same for all items)",
+    "fiscal_registration": "Fiscal registration (same for all items)",
+    "refund_amount": "Refund amount (same for all items)",
+    "refund_date": "Refund date (same for all items)",
+    "refund_time": "Refund time (same for all items)"
+}}
+
+EXAMPLES OF QUANTITY FIXES:
+- "Paket Araz 31\"60 5 K 1000 0.05 0.05" → quantity: 5, unit_price: 0.05, line_total: 0.25
+- "SIRAB QAZSIZ SU PET 2.000 0.89 1.18" → quantity: 2, unit_price: 0.89, line_total: 1.78
+- "BIQ BON QOVYAD QRİL 1000 210 2.10" → quantity: 1, unit_price: 2.10, line_total: 2.10
+
+OCR TEXT:
+{ocr_text}
+
+Return ONLY a valid JSON array with one object per item found."""
     
     try:
         response = client.chat.completions.create(
@@ -108,10 +115,9 @@ def extract_text_with_ai(ocr_text, filename):
                 {"role": "user", "content": user_prompt}
             ],
             temperature=0.1,
-            max_tokens=2000
+            max_tokens=4000
         )
         
-        # Parse the JSON response
         ai_response = response.choices[0].message.content.strip()
         
         # Remove code block markers if present
@@ -119,61 +125,58 @@ def extract_text_with_ai(ocr_text, filename):
             ai_response = ai_response.replace('```json', '').replace('```', '').strip()
         
         # Parse JSON
-        extracted_data = json.loads(ai_response)
+        extracted_items = json.loads(ai_response)
         
-        # Validate and clean the extracted data
-        cleaned_data = validate_and_clean_data(extracted_data)
+        # Validate and clean each item
+        validated_items = []
+        for item in extracted_items:
+            validated_item = validate_and_clean_item(item)
+            if validated_item:
+                validated_items.append(validated_item)
         
-        return cleaned_data
+        return validated_items
         
     except json.JSONDecodeError as e:
         logger.error(f"JSON parsing error for {filename}: {e}")
-        return create_fallback_data(filename)
+        return []
     
     except Exception as e:
-        logger.error(f"OpenAI API error for {filename}: {e}")
-        return create_fallback_data(filename)
+        logger.error(f"AI extraction error for {filename}: {e}")
+        return []
 
-def validate_and_clean_data(data):
+def validate_and_clean_item(item):
     """
-    Validate and clean the extracted data from AI.
+    Validate and clean individual item data.
     """
     
-    # Ensure all 30 fields are present
-    required_fields = [
-        'filename', 'store_name', 'store_address', 'store_code', 'taxpayer_name',
-        'tax_id', 'receipt_number', 'cashier_name', 'date', 'time',
-        'item_name', 'quantity', 'unit_price', 'line_total', 'subtotal',
-        'vat_18_percent', 'total_tax', 'cashless_payment', 'cash_payment', 'bonus_payment',
-        'advance_payment', 'credit_payment', 'queue_number', 'cash_register_model',
-        'cash_register_serial', 'fiscal_id', 'fiscal_registration', 'refund_amount',
-        'refund_date', 'refund_time'
-    ]
-    
-    # Initialize with null values
-    cleaned_data = {}
-    for field in required_fields:
-        cleaned_data[field] = data.get(field, None)
-    
-    # Clean and validate specific fields
     try:
-        # Validate mathematical calculations
-        if all(cleaned_data.get(field) not in [None, "null", ""] for field in ['quantity', 'unit_price', 'line_total']):
-            quantity = float(cleaned_data['quantity'])
-            unit_price = float(cleaned_data['unit_price'])
-            line_total = float(cleaned_data['line_total'])
+        # Ensure required fields exist
+        if not item.get('item_name') or item['item_name'] in [None, "null", ""]:
+            return None
+        
+        # Validate and fix mathematical calculations
+        if all(item.get(field) not in [None, "null", ""] for field in ['quantity', 'unit_price', 'line_total']):
+            quantity = float(item['quantity'])
+            unit_price = float(item['unit_price'])
+            line_total = float(item['line_total'])
             
             # Fix calculation if incorrect
             expected_total = quantity * unit_price
-            if abs(line_total - expected_total) > 0.01:  # Allow small rounding differences
-                cleaned_data['line_total'] = f"{expected_total:.2f}"
-                logger.info(f"Fixed calculation for {cleaned_data['filename']}: {quantity} × {unit_price} = {expected_total:.2f}")
+            if abs(line_total - expected_total) > 0.01:
+                item['line_total'] = f"{expected_total:.2f}"
+                logger.info(f"Fixed calculation for {item.get('item_name', 'unknown')}: {quantity} × {unit_price} = {expected_total:.2f}")
         
-        # Validate suspicious quantities
-        if cleaned_data.get('quantity') and cleaned_data['quantity'] not in [None, "null", ""]:
-            quantity = float(cleaned_data['quantity'])
-            if quantity > 100:
-                logger.warning(f"Suspicious quantity detected in {cleaned_data['filename']}: {quantity}")
+        # Validate realistic quantities (flag suspicious values)
+        if item.get('quantity') and item['quantity'] not in [None, "null", ""]:
+            quantity = float(item['quantity'])
+            if quantity > 50:
+                logger.warning(f"Suspicious quantity for {item.get('item_name', 'unknown')}: {quantity}")
+        
+        # Validate realistic prices for Azerbaijan market
+        if item.get('unit_price') and item['unit_price'] not in [None, "null", ""]:
+            unit_price = float(item['unit_price'])
+            if unit_price > 500:  # Very expensive item
+                logger.warning(f"High price for {item.get('item_name', 'unknown')}: {unit_price} AZN")
         
         # Format monetary values
         monetary_fields = ['unit_price', 'line_total', 'subtotal', 'vat_18_percent', 'total_tax',
@@ -181,16 +184,16 @@ def validate_and_clean_data(data):
                           'credit_payment', 'refund_amount']
         
         for field in monetary_fields:
-            if cleaned_data.get(field) and cleaned_data[field] not in [None, "null", ""]:
+            if item.get(field) and item[field] not in [None, "null", ""]:
                 try:
-                    value = float(cleaned_data[field])
-                    cleaned_data[field] = f"{value:.2f}"
+                    value = float(item[field])
+                    item[field] = f"{value:.2f}"
                 except (ValueError, TypeError):
-                    cleaned_data[field] = "0.00"
+                    item[field] = "0.00"
         
         # Clean item names
-        if cleaned_data.get('item_name') and cleaned_data['item_name'] not in [None, "null", ""]:
-            item_name = cleaned_data['item_name']
+        if item.get('item_name'):
+            item_name = item['item_name']
             # Remove VAT codes and prefixes
             item_name = re.sub(r'^v?ƏDV[:\s]*\d+[:\s]*', '', item_name)
             item_name = re.sub(r'^"?ƏDV[:\s]*\d+[:\s]*', '', item_name)
@@ -198,19 +201,20 @@ def validate_and_clean_data(data):
             item_name = re.sub(r'^Ticarət\s+əlavəsi[:\s]*\d*\s*', '', item_name)
             item_name = re.sub(r'^["\']+|["\']+$', '', item_name)
             item_name = re.sub(r'\s+', ' ', item_name).strip()
-            cleaned_data['item_name'] = item_name
+            item['item_name'] = item_name
+        
+        return item
         
     except Exception as e:
-        logger.error(f"Error during data validation: {e}")
-    
-    return cleaned_data
+        logger.error(f"Error validating item: {e}")
+        return None
 
 def create_fallback_data(filename):
     """
     Create fallback data structure when AI extraction fails.
     """
     
-    return {
+    return [{
         'filename': filename,
         'store_name': None,
         'store_address': None,
@@ -242,11 +246,11 @@ def create_fallback_data(filename):
         'refund_date': None,
         'refund_time': None,
         'error': 'AI extraction failed'
-    }
+    }]
 
 def process_receipt_with_ai(filepath, filename):
     """
-    Process a single receipt using AI-enhanced extraction.
+    Process a single receipt using improved AI extraction.
     """
     
     global processed_count
@@ -255,15 +259,18 @@ def process_receipt_with_ai(filepath, filename):
         # Extract OCR text
         text = pytesseract.image_to_string(Image.open(filepath), lang='aze')
         
-        # Get receipt data with AI
-        receipt_data = extract_text_with_ai(text, filename)
+        # Get all items with AI
+        items = extract_items_with_ai(text, filename)
+        
+        if not items:
+            items = create_fallback_data(filename)
         
         # Update progress counter
         with counter_lock:
             processed_count += 1
-            logger.info(f"Processed {processed_count}/62: {filename}")
+            logger.info(f"Processed {processed_count}/62: {filename} - Found {len(items)} items")
         
-        return receipt_data
+        return items
         
     except Exception as e:
         logger.error(f"Error processing {filename}: {e}")
@@ -291,16 +298,16 @@ def process_batch(batch_files, batch_num):
             filename = future_to_file[future]
             try:
                 result = future.result()
-                batch_results.append(result)
+                batch_results.extend(result)  # Each receipt returns multiple items
             except Exception as e:
                 logger.error(f"Error processing {filename}: {e}")
-                batch_results.append(create_fallback_data(filename))
+                batch_results.extend(create_fallback_data(filename))
     
-    logger.info(f"Completed batch {batch_num} with {len(batch_results)} receipts")
+    logger.info(f"Completed batch {batch_num} with {len(batch_results)} total records")
     return batch_results
 
 def main():
-    """Main function to run AI-enhanced receipt processing in batches."""
+    """Main function to run improved AI-enhanced receipt processing."""
     
     global processed_count
     
@@ -309,7 +316,7 @@ def main():
         logger.error("OpenAI API key not found in .env file")
         return
     
-    logger.info("Starting AI-enhanced receipt processing in batches...")
+    logger.info("Starting IMPROVED AI-enhanced receipt processing...")
     
     all_receipts_data = []
     
@@ -330,7 +337,7 @@ def main():
         all_receipts_data.extend(batch_results)
         
         # Rate limiting between batches
-        time.sleep(2)
+        time.sleep(3)
     
     # Create DataFrame
     df = pd.DataFrame(all_receipts_data)
@@ -357,13 +364,15 @@ def main():
     # Save to CSV
     df.to_csv(OUTPUT_CSV, index=False, encoding='utf-8')
     
-    logger.info(f"✅ AI-enhanced extraction complete! Data saved to '{OUTPUT_CSV}'")
+    logger.info(f"✅ IMPROVED AI extraction complete! Data saved to '{OUTPUT_CSV}'")
     logger.info(f"Total records: {len(df)}")
     logger.info(f"Unique receipts: {len(df['filename'].unique())}")
     
     # Show summary statistics
-    print("\n=== EXTRACTION SUMMARY ===")
-    print(f"Total receipts processed: {len(df)}")
+    print("\n=== IMPROVED EXTRACTION SUMMARY ===")
+    print(f"Total receipts processed: {len(df['filename'].unique())}")
+    print(f"Total items extracted: {len(df)}")
+    print(f"Average items per receipt: {len(df) / len(df['filename'].unique()):.1f}")
     print(f"Receipts with store names: {len(df[df['store_name'].notna()])}")
     print(f"Receipts with addresses: {len(df[df['store_address'].notna()])}")
     print(f"Receipts with item data: {len(df[df['item_name'].notna()])}")

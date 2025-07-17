@@ -123,14 +123,16 @@ receipt_data/
 ├── README.md                    # This documentation
 ├── .env                        # Environment variables (OpenAI API key)
 ├── requirements.txt            # Python dependencies
-├── fiscal_ids.txt              # List of fiscal IDs to scrape
 ├── scraper.py                  # Receipt image scraper
 ├── parser.py                   # Traditional regex-based parser
-├── ai_parser_batch.py          # AI-enhanced parser (production)
-├── receipts/                   # Downloaded receipt images (62 files)
-├── receipts.csv                # Traditional parser results
-├── receipts_ai_enhanced.csv    # AI-enhanced parser results
-└── DATA_QUALITY_ANALYSIS.md    # Detailed quality analysis report
+├── ai_parser_improved.py       # Improved AI-enhanced parser
+├── data/                       # Data directory
+│   ├── fiscal_ids.txt          # List of fiscal IDs to scrape
+│   ├── receipts/               # Downloaded receipt images (62 files)
+│   ├── receipts.csv            # Traditional parser results
+│   ├── receipts_ai_enhanced.csv # Original AI parser results
+│   └── receipts_ai_improved.csv # Improved AI parser results
+└── venv/                       # Virtual environment
 ```
 
 ### 🗂️ File Relationship Diagram
@@ -138,7 +140,7 @@ receipt_data/
 ```mermaid
 graph LR
     subgraph "Input Files"
-        A[fiscal_ids.txt]
+        A[data/fiscal_ids.txt]
         B[.env]
         C[requirements.txt]
     end
@@ -146,13 +148,13 @@ graph LR
     subgraph "Processing Scripts"
         D[scraper.py]
         E[parser.py]
-        F[ai_parser_batch.py]
+        F[ai_parser_improved.py]
     end
     
     subgraph "Generated Data"
-        G[receipts/*.jpeg]
-        H[receipts.csv]
-        I[receipts_ai_enhanced.csv]
+        G[data/receipts/*.jpeg]
+        H[data/receipts.csv]
+        I[data/receipts_ai_improved.csv]
     end
     
     subgraph "Documentation"
@@ -257,12 +259,12 @@ echo "openai=your_openai_api_key_here" > .env
    
    **AI-Enhanced Parser:**
    ```bash
-   python ai_parser_batch.py
+   python ai_parser_improved.py
    ```
 
 4. **View Results**:
-   - Traditional results: `receipts.csv`
-   - AI-enhanced results: `receipts_ai_enhanced.csv`
+   - Traditional results: `data/receipts.csv`
+   - AI-enhanced results: `data/receipts_ai_improved.csv`
 
 ### 🔄 Usage Flow Diagram
 
@@ -284,11 +286,11 @@ sequenceDiagram
     alt Traditional Parser
         U->>P: 5a. Run parser.py
         P->>R: 6a. Process images
-        P->>C: 7a. Generate receipts.csv
+        P->>C: 7a. Generate data/receipts.csv
     else AI-Enhanced Parser
-        U->>P: 5b. Run ai_parser_batch.py
+        U->>P: 5b. Run ai_parser_improved.py
         P->>R: 6b. Process images
-        P->>C: 7b. Generate receipts_ai_enhanced.csv
+        P->>C: 7b. Generate data/receipts_ai_improved.csv
     end
     
     C->>U: 8. View results
@@ -303,8 +305,8 @@ The scraper (`scraper.py`) downloads receipt images from the Azerbaijan e-receip
 ### Configuration
 ```python
 BASE_URL = "https://monitoring.e-kassa.gov.az/pks-monitoring/2.0.0/documents/"
-FISCAL_IDS_FILE = "fiscal_ids.txt"
-OUTPUT_DIR = "receipts"
+FISCAL_IDS_FILE = "data/fiscal_ids.txt"
+OUTPUT_DIR = "data/receipts"
 REQUEST_DELAY_SECONDS = 2.0
 ```
 
@@ -523,8 +525,8 @@ filename,store_name,store_address,item_name,quantity,unit_price,line_total,date,
 ```python
 # scraper.py
 BASE_URL = "https://monitoring.e-kassa.gov.az/pks-monitoring/2.0.0/documents/"
-FISCAL_IDS_FILE = "fiscal_ids.txt"
-OUTPUT_DIR = "receipts"
+FISCAL_IDS_FILE = "data/fiscal_ids.txt"
+OUTPUT_DIR = "data/receipts"
 REQUEST_DELAY_SECONDS = 2.0  # Adjust for rate limiting
 ```
 
@@ -532,7 +534,7 @@ REQUEST_DELAY_SECONDS = 2.0  # Adjust for rate limiting
 ```python
 # parser.py / ai_parser_batch.py
 RECEIPTS_DIR = 'receipts'
-OUTPUT_CSV = 'receipts.csv'  # or 'receipts_ai_enhanced.csv'
+OUTPUT_CSV = 'data/receipts.csv'  # or 'data/receipts_ai_improved.csv'
 ```
 
 ### AI Parser Configuration
