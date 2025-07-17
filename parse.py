@@ -14,7 +14,7 @@ logging.basicConfig(level=logging.ERROR)
 # For Linux/macOS, it's often found automatically if installed via package managers.
 
 RECEIPTS_DIR = 'data/receipts'
-OUTPUT_CSV = 'data/receipts.csv'
+OUTPUT_CSV = 'data/traditional.csv'
 
 def clean_item_name(item_name):
     """

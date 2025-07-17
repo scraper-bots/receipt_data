@@ -123,15 +123,15 @@ receipt_data/
 ├── README.md                    # This documentation
 ├── .env                        # Environment variables (OpenAI API key)
 ├── requirements.txt            # Python dependencies
-├── scraper.py                  # Receipt image scraper
-├── parser.py                   # Traditional regex-based parser
-├── ai_parser_improved.py       # Improved AI-enhanced parser
+├── scrape.py                   # Receipt image scraper
+├── parse.py                    # Traditional regex-based parser
+├── ai_parse.py                 # Improved AI-enhanced parser
 ├── data/                       # Data directory
-│   ├── fiscal_ids.txt          # List of fiscal IDs to scrape
+│   ├── ids.txt                 # List of fiscal IDs to scrape
 │   ├── receipts/               # Downloaded receipt images (62 files)
-│   ├── receipts.csv            # Traditional parser results
-│   ├── receipts_ai_enhanced.csv # Original AI parser results
-│   └── receipts_ai_improved.csv # Improved AI parser results
+│   ├── traditional.csv         # Traditional parser results
+│   ├── original_ai.csv         # Original AI parser results
+│   └── ai_improved.csv         # Improved AI parser results
 └── venv/                       # Virtual environment
 ```
 
@@ -140,21 +140,21 @@ receipt_data/
 ```mermaid
 graph LR
     subgraph "Input Files"
-        A[data/fiscal_ids.txt]
+        A[data/ids.txt]
         B[.env]
         C[requirements.txt]
     end
     
     subgraph "Processing Scripts"
-        D[scraper.py]
-        E[parser.py]
-        F[ai_parser_improved.py]
+        D[scrape.py]
+        E[parse.py]
+        F[ai_parse.py]
     end
     
     subgraph "Generated Data"
         G[data/receipts/*.jpeg]
-        H[data/receipts.csv]
-        I[data/receipts_ai_improved.csv]
+        H[data/traditional.csv]
+        I[data/ai_improved.csv]
     end
     
     subgraph "Documentation"
@@ -242,29 +242,29 @@ echo "openai=your_openai_api_key_here" > .env
 ### Complete Pipeline
 
 1. **Prepare Fiscal IDs**:
-   - Edit `fiscal_ids.txt` with one fiscal ID per line
+   - Edit `data/ids.txt` with one fiscal ID per line
    - Example: `Es6HZUh8kGx5`
 
 2. **Collect Receipt Images**:
    ```bash
-   python scraper.py
+   python scrape.py
    ```
 
 3. **Extract Data (Choose one approach)**:
    
    **Traditional Parser:**
    ```bash
-   python parser.py
+   python parse.py
    ```
    
    **AI-Enhanced Parser:**
    ```bash
-   python ai_parser_improved.py
+   python ai_parse.py
    ```
 
 4. **View Results**:
-   - Traditional results: `data/receipts.csv`
-   - AI-enhanced results: `data/receipts_ai_improved.csv`
+   - Traditional results: `data/traditional.csv`
+   - AI-enhanced results: `data/ai_improved.csv`
 
 ### 🔄 Usage Flow Diagram
 
@@ -284,13 +284,13 @@ sequenceDiagram
     W->>R: 4. Save images
     
     alt Traditional Parser
-        U->>P: 5a. Run parser.py
+        U->>P: 5a. Run parse.py
         P->>R: 6a. Process images
-        P->>C: 7a. Generate data/receipts.csv
+        P->>C: 7a. Generate data/traditional.csv
     else AI-Enhanced Parser
-        U->>P: 5b. Run ai_parser_improved.py
+        U->>P: 5b. Run ai_parse.py
         P->>R: 6b. Process images
-        P->>C: 7b. Generate data/receipts_ai_improved.csv
+        P->>C: 7b. Generate data/ai_improved.csv
     end
     
     C->>U: 8. View results
@@ -305,7 +305,7 @@ The scraper (`scraper.py`) downloads receipt images from the Azerbaijan e-receip
 ### Configuration
 ```python
 BASE_URL = "https://monitoring.e-kassa.gov.az/pks-monitoring/2.0.0/documents/"
-FISCAL_IDS_FILE = "data/fiscal_ids.txt"
+FISCAL_IDS_FILE = "data/ids.txt"
 OUTPUT_DIR = "data/receipts"
 REQUEST_DELAY_SECONDS = 2.0
 ```
@@ -525,21 +525,21 @@ filename,store_name,store_address,item_name,quantity,unit_price,line_total,date,
 ```python
 # scraper.py
 BASE_URL = "https://monitoring.e-kassa.gov.az/pks-monitoring/2.0.0/documents/"
-FISCAL_IDS_FILE = "data/fiscal_ids.txt"
+FISCAL_IDS_FILE = "data/ids.txt"
 OUTPUT_DIR = "data/receipts"
 REQUEST_DELAY_SECONDS = 2.0  # Adjust for rate limiting
 ```
 
 ### Parser Configuration
 ```python
-# parser.py / ai_parser_batch.py
-RECEIPTS_DIR = 'receipts'
-OUTPUT_CSV = 'data/receipts.csv'  # or 'data/receipts_ai_improved.csv'
+# parse.py / ai_parse.py
+RECEIPTS_DIR = 'data/receipts'
+OUTPUT_CSV = 'data/traditional.csv'  # or 'data/ai_improved.csv'
 ```
 
 ### AI Parser Configuration
 ```python
-# ai_parser_batch.py
+# ai_parse.py
 BATCH_SIZE = 10          # Process 10 receipts at a time
 MAX_WORKERS = 3          # Limit concurrent API calls
 MODEL = "gpt-4o-mini"    # OpenAI model to use

@@ -20,7 +20,7 @@ logger = logging.getLogger(__name__)
 
 # --- CONFIGURATION ---
 RECEIPTS_DIR = 'data/receipts'
-OUTPUT_CSV = 'data/receipts_ai_improved.csv'
+OUTPUT_CSV = 'data/ai_improved.csv'
 BATCH_SIZE = 2  # Minimal batches for completion
 MAX_WORKERS = 1  # Single worker for stability
 
