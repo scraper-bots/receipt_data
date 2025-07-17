@@ -21,7 +21,7 @@ logger = logging.getLogger(__name__)
 # --- CONFIGURATION ---
 RECEIPTS_DIR = 'data/receipts'
 OUTPUT_CSV = 'data/ai_improved.csv'
-BATCH_SIZE = 2  # Minimal batches for completion
+BATCH_SIZE = 1  # Process one at a time for maximum reliability
 MAX_WORKERS = 1  # Single worker for stability
 
 # Initialize OpenAI client
@@ -31,7 +31,7 @@ client = OpenAI(api_key=os.getenv('openai'))
 counter_lock = threading.Lock()
 processed_count = 0
 
-def extract_items_with_ai(ocr_text, filename):
+def extract_items_with_ai(ocr_text, filename, max_retries=3):
     """
     Improved AI extraction that focuses on extracting ALL items with realistic values.
     """
@@ -39,12 +39,12 @@ def extract_items_with_ai(ocr_text, filename):
     system_prompt = """You are an expert at extracting ALL items from Azerbaijani receipt OCR text.
 
 CRITICAL REQUIREMENTS:
-1. Extract EVERY item from the receipt - most receipts have multiple items
+1. Extract EVERY item from the receipt - most receipts have 2-15 items
 2. Look for the items section that starts with "Məhsulun adı Say Qiymət Cəmi" 
 3. Each item should have: name, quantity, unit_price, line_total
 4. Fix OCR errors in quantities - decimal places get misread:
-   - 1000 → 1.0 (OCR misreads decimal as 000)
-   - 2000 → 2.0 (OCR misreads decimal as 000)  
+   - 1000 → 1.0 (OCR misreads "1.000" as "1000")
+   - 2000 → 2.0 (OCR misreads "2.000" as "2000")  
    - 13000 → 1.0 (OCR error)
    - Keep small realistic quantities (1-10 typical for most items)
 5. Fix prices to be realistic for Azerbaijan:
@@ -53,8 +53,9 @@ CRITICAL REQUIREMENTS:
    - Drinks: 1-5 AZN
    - If unit_price seems wrong, adjust to realistic value
 6. Ensure quantity × unit_price = line_total (fix calculation errors)
-7. Clean item names: remove ƏDV codes, quotes, prefixes
+7. Clean item names: remove ƏDV codes, quotes, prefixes like "*ƏDV", "ƏDV:", "vƏDV"
 8. Return ALL items found, not just the first one
+9. IMPORTANT: If you find 10+ items, include ALL of them in the response
 
 The receipt-level info should be the SAME for each item (store info, date, etc.)
 """
@@ -107,42 +108,125 @@ OCR TEXT:
 
 Return ONLY a valid JSON array with one object per item found."""
     
-    try:
-        response = client.chat.completions.create(
-            model="gpt-4o-mini",
-            messages=[
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": user_prompt}
-            ],
-            temperature=0.1,
-            max_tokens=4000
-        )
+    for attempt in range(max_retries):
+        try:
+            logger.info(f"Attempting AI extraction for {filename}, attempt {attempt + 1}/{max_retries}")
+            
+            response = client.chat.completions.create(
+                model="gpt-4o-mini",
+                messages=[
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": user_prompt}
+                ],
+                temperature=0.1,
+                max_tokens=4000,
+                timeout=30.0  # 30 second timeout
+            )
+            
+            ai_response = response.choices[0].message.content.strip()
+            logger.info(f"AI response for {filename}: {ai_response[:200]}...")
+            
+            # Remove code block markers if present
+            if ai_response.startswith('```json'):
+                ai_response = ai_response.replace('```json', '').replace('```', '').strip()
+            elif ai_response.startswith('```'):
+                ai_response = ai_response.replace('```', '').strip()
+            
+            # Clean up common JSON formatting issues
+            ai_response = ai_response.strip()
+            if not ai_response.startswith('['):
+                # If response doesn't start with array, try to find JSON array in response
+                import re
+                json_match = re.search(r'\[.*\]', ai_response, re.DOTALL)
+                if json_match:
+                    ai_response = json_match.group(0)
+                else:
+                    logger.error(f"No JSON array found in response for {filename}")
+                    if attempt < max_retries - 1:
+                        time.sleep(2 ** attempt)
+                        continue
+                    else:
+                        return []
+            
+            # Parse JSON
+            extracted_items = json.loads(ai_response)
+            
+            # Ensure it's a list
+            if not isinstance(extracted_items, list):
+                extracted_items = [extracted_items]
+            
+            # Validate and clean each item
+            validated_items = []
+            for item in extracted_items:
+                validated_item = validate_and_clean_item(item)
+                if validated_item:
+                    validated_items.append(validated_item)
+            
+            if not validated_items:
+                logger.warning(f"No valid items extracted from {filename}")
+                # If no items and we have retries left, continue to next attempt
+                if attempt < max_retries - 1:
+                    time.sleep(2 ** attempt)
+                    continue
+                else:
+                    return []
+            
+            logger.info(f"Successfully extracted {len(validated_items)} items from {filename}")
+            return validated_items
+            
+        except json.JSONDecodeError as e:
+            logger.error(f"JSON parsing error for {filename} (attempt {attempt + 1}): {e}")
+            logger.error(f"Response was: {ai_response[:500] if 'ai_response' in locals() else 'No response'}")
+            # Try to recover with fallback parsing
+            fallback_result = try_fallback_parsing(ai_response if 'ai_response' in locals() else "", filename)
+            if fallback_result:
+                return fallback_result
+            # If fallback failed and we have retries left, continue to next attempt
+            if attempt < max_retries - 1:
+                time.sleep(2 ** attempt)  # Exponential backoff
+                continue
+            else:
+                return []
         
-        ai_response = response.choices[0].message.content.strip()
-        
-        # Remove code block markers if present
-        if ai_response.startswith('```json'):
-            ai_response = ai_response.replace('```json', '').replace('```', '').strip()
-        
-        # Parse JSON
-        extracted_items = json.loads(ai_response)
-        
-        # Validate and clean each item
-        validated_items = []
-        for item in extracted_items:
-            validated_item = validate_and_clean_item(item)
-            if validated_item:
-                validated_items.append(validated_item)
-        
-        return validated_items
-        
-    except json.JSONDecodeError as e:
-        logger.error(f"JSON parsing error for {filename}: {e}")
-        return []
+        except Exception as e:
+            logger.error(f"AI extraction error for {filename} (attempt {attempt + 1}): {e}")
+            if attempt < max_retries - 1:
+                time.sleep(2 ** attempt)  # Exponential backoff
+                continue
+            else:
+                return []
     
+    return []
+
+def try_fallback_parsing(ai_response, filename):
+    """
+    Try to extract items from malformed AI response using regex fallback.
+    """
+    try:
+        # Try to find individual JSON objects in the response
+        import re
+        
+        # Look for JSON-like objects
+        object_pattern = r'\{[^{}]*"item_name"[^{}]*\}'
+        objects = re.findall(object_pattern, ai_response)
+        
+        extracted_items = []
+        for obj_str in objects:
+            try:
+                # Try to parse individual object
+                obj = json.loads(obj_str)
+                extracted_items.append(obj)
+            except:
+                continue
+        
+        if extracted_items:
+            logger.info(f"Fallback parsing recovered {len(extracted_items)} items from {filename}")
+            return [validate_and_clean_item(item) for item in extracted_items if validate_and_clean_item(item)]
+        
     except Exception as e:
-        logger.error(f"AI extraction error for {filename}: {e}")
-        return []
+        logger.error(f"Fallback parsing failed for {filename}: {e}")
+    
+    return []
 
 def validate_and_clean_item(item):
     """
@@ -152,8 +236,15 @@ def validate_and_clean_item(item):
     
     try:
         # Ensure required fields exist
-        if not item.get('item_name') or item['item_name'] in [None, "null", ""]:
+        if not item.get('item_name') or item['item_name'] in [None, "null", "", "N/A"]:
             return None
+        
+        # Validate that we have basic numeric fields
+        required_numeric_fields = ['quantity', 'unit_price', 'line_total']
+        for field in required_numeric_fields:
+            if item.get(field) is None or item[field] in ["null", "", "N/A"]:
+                logger.warning(f"Missing required field {field} for item {item.get('item_name', 'unknown')}")
+                return None
         
         # Validate and fix mathematical calculations
         if all(item.get(field) not in [None, "null", ""] for field in ['quantity', 'unit_price', 'line_total']):
@@ -161,11 +252,29 @@ def validate_and_clean_item(item):
             unit_price = float(item['unit_price'])
             line_total = float(item['line_total'])
             
+            # Fix OCR errors in quantities (1000 → 1.0, 2000 → 2.0, etc.)
+            if quantity >= 1000:
+                # OCR often misreads decimal points as "000"
+                quantity = round(quantity / 1000, 1)
+                item['quantity'] = str(quantity)
+                logger.info(f"Fixed OCR quantity error for {item.get('item_name', 'unknown')}: {float(item['quantity']) * 1000:.0f} → {quantity}")
+            
             # Fix calculation if incorrect
             expected_total = quantity * unit_price
             if abs(line_total - expected_total) > 0.01:
-                item['line_total'] = f"{expected_total:.2f}"
-                logger.info(f"Fixed calculation for {item.get('item_name', 'unknown')}: {quantity} × {unit_price} = {expected_total:.2f}")
+                # If quantity × unit_price doesn't match line_total, try to fix quantity
+                if unit_price > 0:
+                    corrected_quantity = round(line_total / unit_price, 1)
+                    if corrected_quantity > 0 and corrected_quantity <= 100:  # Reasonable quantity
+                        item['quantity'] = str(corrected_quantity)
+                        logger.info(f"Fixed quantity for {item.get('item_name', 'unknown')}: {quantity} → {corrected_quantity} (to match line_total)")
+                        quantity = corrected_quantity
+                    else:
+                        # Fix line_total instead
+                        item['line_total'] = f"{expected_total:.2f}"
+                        logger.info(f"Fixed calculation for {item.get('item_name', 'unknown')}: {quantity} × {unit_price} = {expected_total:.2f}")
+                else:
+                    item['line_total'] = f"{expected_total:.2f}"
         
         # Validate realistic quantities (flag suspicious values)
         if item.get('quantity') and item['quantity'] not in [None, "null", ""]:
